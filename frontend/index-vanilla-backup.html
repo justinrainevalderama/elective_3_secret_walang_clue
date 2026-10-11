@@ -1,0 +1,2443 @@
+```html
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Laptop Borrowing System</title>
+
+    <!-- Font Awesome -->
+    <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+        }
+
+        body {
+            background: #f5f7fb;
+            color: #333;
+        }
+
+        /* ================================
+           SIDEBAR
+        ================================= */
+
+        .sidebar {
+            position: fixed;
+            left: 0;
+            top: 0;
+            width: 250px;
+            height: 100vh;
+            background: #172b3a;
+            color: white;
+            padding: 22px 15px;
+            z-index: 1000;
+        }
+
+        .sidebar-logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 5px 10px 25px;
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+            margin-bottom: 20px;
+        }
+
+        .sidebar-logo i {
+            font-size: 24px;
+            color: #b8bec6;
+        }
+
+        .sidebar-logo h2 {
+            font-size: 17px;
+            font-weight: 600;
+        }
+
+        .sidebar-menu {
+            list-style: none;
+        }
+
+        .sidebar-menu li {
+            margin-bottom: 6px;
+        }
+
+        .sidebar-menu button {
+            width: 100%;
+            border: none;
+            background: transparent;
+            color: #c6ced6;
+            padding: 12px 13px;
+            text-align: left;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: 0.2s;
+        }
+
+        .sidebar-menu button i {
+            width: 22px;
+            text-align: center;
+            font-size: 15px;
+            color: #b8bec6;
+            margin-right: 9px;
+        }
+
+        .sidebar-menu button:hover {
+            background: #263d4e;
+            color: white;
+        }
+
+        .sidebar-menu .active {
+            background: #2563eb;
+            color: white;
+        }
+
+        .logout-btn {
+            margin-top: 170px;
+        }
+
+        .logout-btn:hover {
+            background: #b91c1c !important;
+        }
+
+        /* ================================
+           MAIN CONTENT
+        ================================= */
+
+        .main-content {
+            margin-left: 250px;
+            padding: 25px;
+            min-height: 100vh;
+        }
+
+        /* ================================
+           HEADER
+        ================================= */
+
+        .top-header {
+            background: white;
+            padding: 16px 22px;
+            border-radius: 8px;
+            margin-bottom: 25px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .top-header h1 {
+            color: #172b3a;
+            font-size: 21px;
+            margin-bottom: 4px;
+        }
+
+        .top-header p {
+            color: #7b8490;
+            font-size: 12px;
+        }
+
+        .header-user {
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            color: #555;
+            font-size: 13px;
+        }
+
+        .header-user i {
+            color: #9aa0a6;
+            font-size: 20px;
+        }
+
+        /* ================================
+           PAGES
+        ================================= */
+
+        .page {
+            display: none;
+        }
+
+        .page.active {
+            display: block;
+        }
+
+        .page-title {
+            margin-bottom: 22px;
+        }
+
+        .page-title h1 {
+            color: #172b3a;
+            font-size: 23px;
+            margin-bottom: 5px;
+        }
+
+        .page-title p {
+            color: #7b8490;
+            font-size: 13px;
+        }
+
+        /* ================================
+           LOGIN / REGISTER
+        ================================= */
+
+        .auth-container {
+            width: 100%;
+            max-width: 420px;
+            margin: 70px auto;
+            background: white;
+            padding: 35px;
+            border-radius: 10px;
+            box-shadow: 0 5px 25px rgba(0,0,0,0.08);
+        }
+
+        .auth-container h1 {
+            text-align: center;
+            color: #172b3a;
+            margin-bottom: 8px;
+            font-size: 23px;
+        }
+
+        .auth-container p {
+            text-align: center;
+            color: #777;
+            margin-bottom: 25px;
+            font-size: 13px;
+        }
+
+        .form-group {
+            margin-bottom: 17px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 7px;
+            font-weight: bold;
+            font-size: 13px;
+            color: #444;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 11px;
+            border: 1px solid #d5d9df;
+            border-radius: 6px;
+            font-size: 13px;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: #2563eb;
+        }
+
+        .primary-btn {
+            width: 100%;
+            padding: 11px;
+            border: none;
+            background: #2563eb;
+            color: white;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .primary-btn:hover {
+            background: #1d4ed8;
+        }
+
+        .auth-link {
+            text-align: center;
+            margin-top: 17px;
+            font-size: 13px;
+            color: #666;
+        }
+
+        .auth-link a {
+            color: #2563eb;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        /* ================================
+           WELCOME BOX
+        ================================= */
+
+        .welcome-box {
+            background: white;
+            padding: 22px;
+            border-radius: 8px;
+            margin-bottom: 25px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+
+        .welcome-box h2,
+        .welcome-box h3 {
+            color: #172b3a;
+            margin-bottom: 6px;
+        }
+
+        .welcome-box h2 {
+            font-size: 19px;
+        }
+
+        .welcome-box h3 {
+            font-size: 14px;
+        }
+
+        .welcome-box p {
+            color: #777;
+            font-size: 13px;
+        }
+
+        /* ================================
+           STATISTICS
+        ================================= */
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 18px;
+            margin-bottom: 25px;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+            border-left: 4px solid #2563eb;
+        }
+
+        .stat-card:nth-child(2) {
+            border-left-color: #16a34a;
+        }
+
+        .stat-card:nth-child(3) {
+            border-left-color: #f59e0b;
+        }
+
+        .stat-card:nth-child(4) {
+            border-left-color: #dc2626;
+        }
+
+        .stat-icon {
+            width: 35px;
+            height: 35px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 6px;
+            background: #eef4ff;
+            color: #2563eb;
+            margin-bottom: 12px;
+        }
+
+        .stat-card h3 {
+            color: #777;
+            font-size: 12px;
+            margin-bottom: 7px;
+            font-weight: normal;
+        }
+
+        .stat-card p {
+            font-size: 26px;
+            font-weight: bold;
+            color: #172b3a;
+        }
+
+        /* ================================
+           DASHBOARD
+        ================================= */
+
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 20px;
+        }
+
+        .dashboard-box {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+
+        .dashboard-box h2 {
+            color: #172b3a;
+            font-size: 16px;
+            margin-bottom: 17px;
+        }
+
+        /* ================================
+           LAPTOP GRID
+        ================================= */
+
+        .laptop-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 18px;
+        }
+
+        .laptop-card {
+            background: white;
+            padding: 12px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+            border: 1px solid #edf0f3;
+        }
+
+        .laptop-image {
+            width: 100%;
+            height: 130px;
+            object-fit: cover;
+            border-radius: 6px;
+            margin-bottom: 12px;
+        }
+
+        .laptop-card h3 {
+            color: #172b3a;
+            font-size: 15px;
+            margin-bottom: 8px;
+        }
+
+        .status {
+            display: inline-block;
+            font-weight: bold;
+            font-size: 11px;
+            padding: 5px 9px;
+            border-radius: 20px;
+            margin-bottom: 12px;
+        }
+
+        .available {
+            color: #15803d;
+            background: #dcfce7;
+        }
+
+        .borrowed {
+            color: #b91c1c;
+            background: #fee2e2;
+        }
+
+        .laptop-card button {
+            width: 100%;
+            padding: 9px;
+            border: none;
+            background: #2563eb;
+            color: white;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        .laptop-card button:hover {
+            background: #1d4ed8;
+        }
+
+        .laptop-card button:disabled {
+            background: #aeb4ba;
+            cursor: not-allowed;
+        }
+
+        /* ================================
+           TABLE
+        ================================= */
+
+        .table-container {
+            background: white;
+            padding: 18px;
+            border-radius: 8px;
+            overflow-x: auto;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th,
+        td {
+            padding: 11px 12px;
+            border-bottom: 1px solid #edf0f3;
+            text-align: left;
+            white-space: nowrap;
+            font-size: 12px;
+        }
+
+        th {
+            background: #f1f5f9;
+            color: #475569;
+            font-weight: bold;
+        }
+
+        td {
+            color: #555;
+        }
+
+        tr:hover {
+            background: #f8fafc;
+        }
+
+        /* ================================
+           ADMIN FORM
+        ================================= */
+
+        .admin-form {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 22px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+
+        .admin-form h2 {
+            color: #172b3a;
+            font-size: 17px;
+            margin-bottom: 15px;
+        }
+
+        .admin-form-row {
+            display: flex;
+            gap: 10px;
+        }
+
+        .admin-form-row input {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #d5d9df;
+            border-radius: 6px;
+            font-size: 13px;
+        }
+
+        .admin-form-row button {
+            padding: 10px 20px;
+            border: none;
+            background: #2563eb;
+            color: white;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+
+        .admin-form-row button:hover {
+            background: #1d4ed8;
+        }
+
+        /* ================================
+           DELETE BUTTON
+        ================================= */
+
+        .delete-btn {
+            background: #dc2626;
+            color: white;
+            border: none;
+            padding: 7px 11px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 11px;
+        }
+
+        .delete-btn:hover {
+            background: #b91c1c;
+        }
+
+        /* ================================
+           SEARCH
+        ================================= */
+
+        .page-toolbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 18px;
+        }
+
+        .search-box {
+            width: 230px;
+            padding: 9px 12px;
+            border: 1px solid #d5d9df;
+            border-radius: 6px;
+            background: white;
+            font-size: 12px;
+        }
+
+        /* ================================
+           MOBILE
+        ================================= */
+
+        @media (max-width: 900px) {
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        @media (max-width: 700px) {
+            .sidebar {
+                width: 200px;
+            }
+
+            .main-content {
+                margin-left: 200px;
+                padding: 15px;
+            }
+
+            .sidebar-logo h2 {
+                font-size: 14px;
+            }
+
+            .sidebar-menu button {
+                font-size: 12px;
+                padding: 10px;
+            }
+
+            .logout-btn {
+                margin-top: 100px;
+            }
+
+            .top-header {
+                padding: 13px;
+            }
+
+            .top-header h1 {
+                font-size: 17px;
+            }
+
+            .header-user span {
+                display: none;
+            }
+
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .admin-form-row {
+                flex-direction: column;
+            }
+
+            .page-toolbar {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 10px;
+            }
+
+            .search-box {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- ================================
+         LOGIN PAGE
+    ================================= -->
+
+    <div id="loginPage">
+
+        <div class="auth-container">
+
+            <h1>Laptop Borrowing System</h1>
+
+            <p>Login to your account</p>
+
+            <div class="form-group">
+                <label>Username</label>
+                <input
+                    type="text"
+                    id="loginUsername"
+                    placeholder="Enter username">
+            </div>
+
+            <div class="form-group">
+                <label>Password</label>
+                <input
+                    type="password"
+                    id="loginPassword"
+                    placeholder="Enter password">
+            </div>
+
+            <button class="primary-btn" onclick="login()">
+                Login
+            </button>
+
+            <div class="auth-link">
+                Don't have an account?
+                <a onclick="showRegister()">Register</a>
+            </div>
+
+        </div>
+
+    </div>
+
+
+    <!-- ================================
+         REGISTER PAGE
+    ================================= -->
+
+    <div id="registerPage" style="display:none;">
+
+        <div class="auth-container">
+
+            <h1>Create Account</h1>
+
+            <p>Register for the Laptop Borrowing System</p>
+
+            <div class="form-group">
+                <label>Full Name</label>
+                <input
+                    type="text"
+                    id="registerName"
+                    placeholder="Enter full name">
+            </div>
+
+            <div class="form-group">
+                <label>Student ID</label>
+                <input
+                    type="text"
+                    id="registerStudentID"
+                    placeholder="Enter student ID">
+            </div>
+
+            <div class="form-group">
+                <label>Username</label>
+                <input
+                    type="text"
+                    id="registerUsername"
+                    placeholder="Create username">
+            </div>
+
+            <div class="form-group">
+                <label>Password</label>
+                <input
+                    type="password"
+                    id="registerPassword"
+                    placeholder="Create password">
+            </div>
+
+            <div class="form-group">
+                <label>Confirm Password</label>
+                <input
+                    type="password"
+                    id="registerConfirmPassword"
+                    placeholder="Confirm password">
+            </div>
+
+            <button class="primary-btn" onclick="registerUser()">
+                Register
+            </button>
+
+            <div class="auth-link">
+                Already have an account?
+                <a onclick="showLogin()">Login</a>
+            </div>
+
+        </div>
+
+    </div>
+
+
+    <!-- ================================
+         USER SYSTEM
+    ================================= -->
+
+    <div id="userSystem" style="display:none;">
+
+        <!-- USER SIDEBAR -->
+
+        <div class="sidebar">
+
+            <div class="sidebar-logo">
+                <i class="fa-solid fa-laptop"></i>
+                <h2>Laptop System</h2>
+            </div>
+
+            <ul class="sidebar-menu">
+
+                <li>
+                    <button
+                        class="active"
+                        onclick="showUserPage('dashboardPage', this)">
+                        <i class="fa-solid fa-house"></i>
+                        Dashboard
+                    </button>
+                </li>
+
+                <li>
+                    <button
+                        onclick="showUserPage('historyPage', this)">
+                        <i class="fa-solid fa-clock-rotate-left"></i>
+                        Borrowing History
+                    </button>
+                </li>
+
+                <li>
+                    <button
+                        onclick="showUserPage('profilePage', this)">
+                        <i class="fa-solid fa-user"></i>
+                        Profile
+                    </button>
+                </li>
+
+                <li>
+                    <button
+                        class="logout-btn"
+                        onclick="logout()">
+                        <i class="fa-solid fa-right-from-bracket"></i>
+                        Logout
+                    </button>
+                </li>
+
+            </ul>
+
+        </div>
+
+
+        <!-- USER MAIN CONTENT -->
+
+        <div class="main-content">
+
+            <header class="top-header">
+
+                <div>
+                    <h1>Laptop Borrowing System</h1>
+                    <p>
+                        Computerized Laptop Borrowing and Management
+                    </p>
+                </div>
+
+                <div class="header-user">
+                    <i class="fa-solid fa-circle-user"></i>
+                    <span id="headerUserName">User</span>
+                </div>
+
+            </header>
+
+
+            <!-- USER DASHBOARD -->
+
+            <div id="dashboardPage" class="page active">
+
+                <div class="page-title">
+                    <h1>Dashboard</h1>
+                    <p>
+                        Manage your laptop borrowing activity.
+                    </p>
+                </div>
+
+                <div class="welcome-box">
+
+                    <h2>
+                        Welcome,
+                        <span id="welcomeName"></span>!
+                    </h2>
+
+                    <p>
+                        You can borrow available laptops
+                        and view your borrowing history here.
+                    </p>
+
+                </div>
+
+                <h2 style="
+                    color:#172b3a;
+                    font-size:17px;
+                    margin-bottom:15px;
+                ">
+                    Available Laptops
+                </h2>
+
+                <div
+                    class="laptop-grid"
+                    id="dashboardLaptopGrid">
+                </div>
+
+            </div>
+
+
+
+
+            <!-- USER HISTORY -->
+
+            <div id="historyPage" class="page">
+
+                <div class="page-title">
+
+                    <h1>My Borrowing History</h1>
+
+                    <p>
+                        View your laptop borrowing records.
+                    </p>
+
+                </div>
+
+                <div class="table-container">
+
+                    <table>
+
+                        <thead>
+                            <tr>
+                                <th>Laptop</th>
+                                <th>Borrow Date</th>
+                                <th>Borrow Time</th>
+                                <th>Return Date</th>
+                                <th>Return Time</th>
+                                <th>Status</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+
+                        <tbody id="historyTable"></tbody>
+
+                    </table>
+
+                </div>
+
+            </div>
+
+
+            <!-- USER PROFILE -->
+
+            <div id="profilePage" class="page">
+
+                <div class="page-title">
+
+                    <h1>My Profile</h1>
+
+                    <p>
+                        Your registered account information.
+                    </p>
+
+                </div>
+
+                <div class="welcome-box">
+
+                    <h3>Full Name</h3>
+                    <p id="profileName"></p>
+
+                    <br>
+
+                    <h3>Student ID</h3>
+                    <p id="profileStudentID"></p>
+
+                    <br>
+
+                    <h3>Username</h3>
+                    <p id="profileUsername"></p>
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+
+    <!-- ================================
+         ADMIN SYSTEM
+    ================================= -->
+
+    <div id="adminSystem" style="display:none;">
+
+        <!-- ADMIN SIDEBAR -->
+
+        <div class="sidebar">
+
+            <div class="sidebar-logo">
+                <i class="fa-solid fa-laptop"></i>
+                <h2>Admin Panel</h2>
+            </div>
+
+            <ul class="sidebar-menu">
+
+                <li>
+                    <button
+                        class="active"
+                        onclick="showAdminPage('adminDashboard', this)">
+                        <i class="fa-solid fa-house"></i>
+                        Dashboard
+                    </button>
+                </li>
+
+                <li>
+                    <button
+                        onclick="showAdminPage('manageLaptopsPage', this)">
+                        <i class="fa-solid fa-laptop"></i>
+                        Manage Laptops
+                    </button>
+                </li>
+
+                <li>
+                    <button
+                        onclick="showAdminPage('usersPage', this)">
+                        <i class="fa-solid fa-users"></i>
+                        Registered Users
+                    </button>
+                </li>
+
+                <li>
+                    <button
+                        class="logout-btn"
+                        onclick="logout()">
+                        <i class="fa-solid fa-right-from-bracket"></i>
+                        Logout
+                    </button>
+                </li>
+
+            </ul>
+
+        </div>
+
+
+        <!-- ADMIN MAIN CONTENT -->
+
+        <div class="main-content">
+
+            <header class="top-header">
+
+                <div>
+
+                    <h1>Laptop Borrowing System</h1>
+
+                    <p>
+                        Administrator Dashboard
+                    </p>
+
+                </div>
+
+                <div class="header-user">
+
+                    <i class="fa-solid fa-circle-user"></i>
+
+                    <span>Administrator</span>
+
+                </div>
+
+            </header>
+
+
+            <!-- ADMIN DASHBOARD -->
+
+            <div id="adminDashboard" class="page active">
+
+                <div class="page-title">
+
+                    <h1>Dashboard</h1>
+
+                    <p>
+                        Manage laptops and registered users.
+                    </p>
+
+                </div>
+
+
+                <!-- STATISTICS -->
+
+                <div class="stats-grid">
+
+                    <div class="stat-card">
+
+                        <div class="stat-icon">
+                            <i class="fa-solid fa-laptop"></i>
+                        </div>
+
+                        <h3>Total Laptops</h3>
+
+                        <p id="totalLaptops">0</p>
+
+                    </div>
+
+
+                    <div class="stat-card">
+
+                        <div class="stat-icon">
+                            <i class="fa-solid fa-circle-check"></i>
+                        </div>
+
+                        <h3>Available</h3>
+
+                        <p id="availableLaptops">0</p>
+
+                    </div>
+
+
+                    <div class="stat-card">
+
+                        <div class="stat-icon">
+                            <i class="fa-solid fa-clock"></i>
+                        </div>
+
+                        <h3>Borrowed</h3>
+
+                        <p id="borrowedLaptops">0</p>
+
+                    </div>
+
+
+                    <div class="stat-card">
+
+                        <div class="stat-icon">
+                            <i class="fa-solid fa-users"></i>
+                        </div>
+
+                        <h3>Registered Users</h3>
+
+                        <p id="totalUsers">0</p>
+
+                    </div>
+
+                </div>
+
+
+                <!-- DASHBOARD INFORMATION -->
+
+                <div class="dashboard-grid">
+
+                    <div class="dashboard-box">
+
+                        <h2>System Overview</h2>
+
+                        <p style="
+                            color:#777;
+                            font-size:13px;
+                            line-height:1.7;
+                        ">
+                            Use the sidebar to manage laptops
+                            and view registered users.
+                            The system automatically updates
+                            the laptop statistics when a laptop
+                            is borrowed or returned.
+                        </p>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+
+            <!-- MANAGE LAPTOPS -->
+
+            <div id="manageLaptopsPage" class="page">
+
+                <div class="page-title">
+
+                    <h1>Manage Laptops</h1>
+
+                    <p>
+                        Add or remove laptops from the system.
+                    </p>
+
+                </div>
+
+
+                <div class="admin-form">
+
+                    <h2>Add Laptop</h2>
+
+                    <div class="admin-form-row">
+
+                        <input
+                            type="text"
+                            id="newLaptopNumber"
+                            placeholder="Example: LAP-005">
+
+                        <button onclick="addLaptop()">
+
+                            <i class="fa-solid fa-plus"></i>
+
+                            Add Laptop
+
+                        </button>
+
+                    </div>
+
+                </div>
+
+
+                <div class="table-container">
+
+                    <table>
+
+                        <thead>
+
+                            <tr>
+                                <th>Laptop Number</th>
+                                <th>Status</th>
+                                <th>Action</th>
+                            </tr>
+
+                        </thead>
+
+                        <tbody id="adminLaptopTable"></tbody>
+
+                    </table>
+
+                </div>
+
+            </div>
+
+
+            <!-- REGISTERED USERS -->
+
+            <div id="usersPage" class="page">
+
+                <div class="page-title">
+
+                    <h1>Registered Users</h1>
+
+                    <p>
+                        View users registered in the system.
+                    </p>
+
+                </div>
+
+
+                <div class="table-container">
+
+                    <table>
+
+                        <thead>
+
+                            <tr>
+                                <th>Full Name</th>
+                                <th>Student ID</th>
+                                <th>Username</th>
+                            </tr>
+
+                        </thead>
+
+                        <tbody id="registeredUsersTable"></tbody>
+
+                    </table>
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+
+    <!-- ================================
+         JAVASCRIPT
+    ================================= -->
+
+    <script>
+
+    /* ================================
+       LAPTOP IMAGE
+    ================================= */
+
+    const laptopImage =
+        "https://images.unsplash.com/photo-1496181133206-80ce9b88a853?auto=format&fit=crop&w=600&q=80";
+
+
+    /* ================================
+       LAPTOP DATA
+    ================================= */
+
+    let laptops = [
+
+        {
+            number: "LAP-001",
+            status: "Available",
+            image: laptopImage
+        },
+
+        {
+            number: "LAP-002",
+            status: "Available",
+            image: laptopImage
+        },
+
+        {
+            number: "LAP-003",
+            status: "Available",
+            image: laptopImage
+        },
+
+        {
+            number: "LAP-004",
+            status: "Available",
+            image: laptopImage
+        }
+
+    ];
+
+
+    /* ================================
+       BORROWING DATA
+    ================================= */
+
+    let borrowingLogs = [];
+
+    let currentUser = null;
+
+
+    /* ================================
+       ADMIN ACCOUNT
+    ================================= */
+
+    const adminAccount = {
+
+        username: "admin",
+
+        password: "admin123"
+
+    };
+
+
+    /* ================================
+       SHOW LOGIN
+    ================================= */
+
+    function showLogin() {
+
+        document.getElementById("loginPage").style.display = "block";
+
+        document.getElementById("registerPage").style.display = "none";
+
+        document.getElementById("userSystem").style.display = "none";
+
+        document.getElementById("adminSystem").style.display = "none";
+
+    }
+
+
+    /* ================================
+       SHOW REGISTER
+    ================================= */
+
+    function showRegister() {
+
+        document.getElementById("loginPage").style.display = "none";
+
+        document.getElementById("registerPage").style.display = "block";
+
+    }
+
+
+    /* ================================
+       REGISTER USER
+    ================================= */
+
+    function registerUser() {
+
+        const name =
+            document.getElementById("registerName").value.trim();
+
+        const studentID =
+            document.getElementById("registerStudentID").value.trim();
+
+        const username =
+            document.getElementById("registerUsername").value.trim();
+
+        const password =
+            document.getElementById("registerPassword").value;
+
+        const confirmPassword =
+            document.getElementById("registerConfirmPassword").value;
+
+
+        if (!name || !studentID || !username || !password || !confirmPassword) {
+
+            alert("Please complete all fields.");
+
+            return;
+        }
+
+
+        if (password !== confirmPassword) {
+
+            alert("Passwords do not match.");
+
+            return;
+        }
+
+
+        let users =
+            JSON.parse(localStorage.getItem("users")) || [];
+
+
+        const existingUser =
+            users.find(
+                user =>
+                user.username.toLowerCase() ===
+                username.toLowerCase()
+            );
+
+
+        if (existingUser) {
+
+            alert("Username already exists.");
+
+            return;
+        }
+
+
+        /* SAVE STUDENT ID */
+
+        const newUser = {
+
+            name: name,
+
+            studentID: studentID,
+
+            username: username,
+
+            password: password
+
+        };
+
+
+        users.push(newUser);
+
+
+        localStorage.setItem(
+            "users",
+            JSON.stringify(users)
+        );
+
+
+        alert("Registration successful!");
+
+        showLogin();
+
+
+        /* CLEAR REGISTRATION FORM */
+
+        document.getElementById("registerName").value = "";
+
+        document.getElementById("registerStudentID").value = "";
+
+        document.getElementById("registerUsername").value = "";
+
+        document.getElementById("registerPassword").value = "";
+
+        document.getElementById("registerConfirmPassword").value = "";
+
+    }
+
+
+    /* ================================
+       LOGIN
+    ================================= */
+
+    function login() {
+
+        const username =
+            document.getElementById("loginUsername").value.trim();
+
+        const password =
+            document.getElementById("loginPassword").value;
+
+
+        /* ADMIN LOGIN */
+
+        if (
+            username === adminAccount.username &&
+            password === adminAccount.password
+        ) {
+
+            document.getElementById("loginPage").style.display = "none";
+
+            document.getElementById("registerPage").style.display = "none";
+
+            document.getElementById("userSystem").style.display = "none";
+
+            document.getElementById("adminSystem").style.display = "block";
+
+
+            showAdminPage(
+                "adminDashboard",
+                document.querySelector(
+                    "#adminSystem .sidebar-menu button"
+                )
+            );
+
+            return;
+        }
+
+
+        /* USER LOGIN */
+
+        const users =
+            JSON.parse(localStorage.getItem("users")) || [];
+
+
+        const user =
+            users.find(
+                u =>
+                u.username === username &&
+                u.password === password
+            );
+
+
+        if (!user) {
+
+            alert("Invalid username or password.");
+
+            return;
+        }
+
+
+        /* MAKE SURE STUDENT ID EXISTS */
+
+        currentUser = {
+
+            name: user.name,
+
+            studentID: user.studentID || "Not provided",
+
+            username: user.username,
+
+            password: user.password
+
+        };
+
+
+        document.getElementById("loginPage").style.display = "none";
+
+        document.getElementById("registerPage").style.display = "none";
+
+        document.getElementById("adminSystem").style.display = "none";
+
+        document.getElementById("userSystem").style.display = "block";
+
+
+        /* DISPLAY USER INFORMATION */
+
+        document.getElementById("welcomeName").textContent =
+            currentUser.name;
+
+        document.getElementById("headerUserName").textContent =
+            currentUser.name;
+
+        document.getElementById("profileName").textContent =
+            currentUser.name;
+
+        document.getElementById("profileStudentID").textContent =
+            currentUser.studentID;
+
+        document.getElementById("profileUsername").textContent =
+            currentUser.username;
+
+
+        showUserPage(
+            "dashboardPage",
+            document.querySelector(
+                "#userSystem .sidebar-menu button"
+            )
+        );
+
+    }
+
+
+    /* ================================
+       USER PAGE NAVIGATION
+    ================================= */
+
+    function showUserPage(pageID, button) {
+
+        const pages =
+            document.querySelectorAll(
+                "#userSystem .main-content .page"
+            );
+
+
+        pages.forEach(page => {
+
+            page.style.display = "none";
+
+            page.classList.remove("active");
+
+        });
+
+
+        const selectedPage =
+            document.getElementById(pageID);
+
+
+        if (selectedPage) {
+
+            selectedPage.style.display = "block";
+
+            selectedPage.classList.add("active");
+
+        }
+
+
+        const buttons =
+            document.querySelectorAll(
+                "#userSystem .sidebar-menu button"
+            );
+
+
+        buttons.forEach(btn => {
+
+            btn.classList.remove("active");
+
+        });
+
+
+        if (button) {
+
+            button.classList.add("active");
+
+        }
+
+
+        if (pageID === "dashboardPage") {
+
+            renderDashboardLaptops();
+
+        }
+
+
+        if (pageID === "historyPage") {
+
+            updateHistory();
+
+        }
+
+
+        if (pageID === "profilePage") {
+
+            updateProfile();
+
+        }
+
+    }
+
+
+    /* ================================
+       UPDATE PROFILE
+    ================================= */
+
+    function updateProfile() {
+
+        if (!currentUser) {
+
+            return;
+
+        }
+
+
+        document.getElementById("profileName").textContent =
+            currentUser.name;
+
+        document.getElementById("profileStudentID").textContent =
+            currentUser.studentID || "Not provided";
+
+        document.getElementById("profileUsername").textContent =
+            currentUser.username;
+
+    }
+
+
+    /* ================================
+       ADMIN PAGE NAVIGATION
+    ================================= */
+
+    function showAdminPage(pageID, button) {
+
+        const pages =
+            document.querySelectorAll(
+                "#adminSystem .main-content .page"
+            );
+
+
+        pages.forEach(page => {
+
+            page.style.display = "none";
+
+            page.classList.remove("active");
+
+        });
+
+
+        const selectedPage =
+            document.getElementById(pageID);
+
+
+        if (selectedPage) {
+
+            selectedPage.style.display = "block";
+
+            selectedPage.classList.add("active");
+
+        }
+
+
+        const buttons =
+            document.querySelectorAll(
+                "#adminSystem .sidebar-menu button"
+            );
+
+
+        buttons.forEach(btn => {
+
+            btn.classList.remove("active");
+
+        });
+
+
+        if (button) {
+
+            button.classList.add("active");
+
+        }
+
+
+        updateAdmin();
+
+    }
+
+
+    /* ================================
+       CREATE LAPTOP CARD
+    ================================= */
+
+    function createLaptopCard(laptop) {
+
+        const card =
+            document.createElement("div");
+
+
+        card.className = "laptop-card";
+
+
+        const statusClass =
+            laptop.status === "Available"
+            ? "available"
+            : "borrowed";
+
+
+        card.innerHTML = `
+
+            <img
+                class="laptop-image"
+                src="${laptop.image}"
+                alt="Laptop">
+
+            <h3>
+                ${laptop.number}
+            </h3>
+
+            <p class="status ${statusClass}">
+                ${laptop.status}
+            </p>
+
+            <button
+                onclick="borrowLaptop('${laptop.number}')"
+                ${laptop.status !== "Available" ? "disabled" : ""}>
+
+                ${
+                    laptop.status === "Available"
+                    ? "Borrow Laptop"
+                    : "Currently Borrowed"
+                }
+
+            </button>
+
+        `;
+
+
+        return card;
+
+    }
+
+
+    /* ================================
+       DISPLAY DASHBOARD LAPTOPS
+    ================================= */
+
+    function renderDashboardLaptops() {
+
+        const grid =
+            document.getElementById("dashboardLaptopGrid");
+
+
+        if (!grid) {
+
+            return;
+        }
+
+
+        grid.innerHTML = "";
+
+
+        laptops.forEach(laptop => {
+
+            grid.appendChild(
+                createLaptopCard(laptop)
+            );
+
+        });
+
+    }
+
+
+    /* ================================
+       BORROW LAPTOP
+    ================================= */
+
+    function borrowLaptop(laptopNumber) {
+
+        if (!currentUser) {
+
+            alert("Please login first.");
+
+            return;
+        }
+
+
+        const laptop =
+            laptops.find(
+                item =>
+                item.number === laptopNumber
+            );
+
+
+        if (!laptop) {
+
+            return;
+        }
+
+
+        if (laptop.status !== "Available") {
+
+            alert("This laptop is already borrowed.");
+
+            return;
+        }
+
+
+        const now = new Date();
+
+
+        laptop.status = "Borrowed";
+
+
+        borrowingLogs.push({
+
+            username: currentUser.username,
+
+            name: currentUser.name,
+
+            studentID: currentUser.studentID,
+
+            laptopNumber: laptopNumber,
+
+            borrowDate: now.toLocaleDateString(),
+
+            borrowTime: now.toLocaleTimeString(),
+
+            returnDate: "-",
+
+            returnTime: "-",
+
+            status: "Borrowed"
+
+        });
+
+
+        alert(
+            laptopNumber +
+            " has been borrowed successfully."
+        );
+
+
+        renderDashboardLaptops();
+
+        updateHistory();
+
+        updateAdmin();
+
+    }
+
+
+    /* ================================
+       RETURN LAPTOP
+    ================================= */
+
+    function returnLaptop(index) {
+
+        const log =
+            borrowingLogs[index];
+
+
+        if (!log) {
+
+            return;
+        }
+
+
+        const laptop =
+            laptops.find(
+                item =>
+                item.number === log.laptopNumber
+            );
+
+
+        if (laptop) {
+
+            laptop.status = "Available";
+
+        }
+
+
+        const now = new Date();
+
+
+        log.returnDate =
+            now.toLocaleDateString();
+
+        log.returnTime =
+            now.toLocaleTimeString();
+
+        log.status =
+            "Returned";
+
+
+        alert(
+            log.laptopNumber +
+            " has been returned."
+        );
+
+
+        renderDashboardLaptops();
+
+        updateHistory();
+
+        updateAdmin();
+
+    }
+
+
+    /* ================================
+       USER BORROWING HISTORY
+    ================================= */
+
+    function updateHistory() {
+
+        const table =
+            document.getElementById("historyTable");
+
+
+        if (!table) {
+
+            return;
+        }
+
+
+        table.innerHTML = "";
+
+
+        if (!currentUser) {
+
+            return;
+        }
+
+
+        const userLogs =
+            borrowingLogs.filter(
+                log =>
+                log.username ===
+                currentUser.username
+            );
+
+
+        if (userLogs.length === 0) {
+
+            table.innerHTML = `
+
+                <tr>
+
+                    <td colspan="7">
+                        No borrowing history yet.
+                    </td>
+
+                </tr>
+
+            `;
+
+            return;
+        }
+
+
+        borrowingLogs.forEach((log, index) => {
+
+            if (
+                log.username !==
+                currentUser.username
+            ) {
+
+                return;
+            }
+
+
+            const row =
+                document.createElement("tr");
+
+
+            row.innerHTML = `
+
+                <td>
+                    ${log.laptopNumber}
+                </td>
+
+                <td>
+                    ${log.borrowDate}
+                </td>
+
+                <td>
+                    ${log.borrowTime}
+                </td>
+
+                <td>
+                    ${log.returnDate}
+                </td>
+
+                <td>
+                    ${log.returnTime}
+                </td>
+
+                <td>
+
+                    <span class="${
+                        log.status === "Borrowed"
+                        ? "status borrowed"
+                        : "status available"
+                    }">
+
+                        ${log.status}
+
+                    </span>
+
+                </td>
+
+                <td>
+
+                    ${
+                        log.status === "Borrowed"
+
+                        ?
+
+                        `<button
+                            class="delete-btn"
+                            style="background:#16a34a;"
+                            onclick="returnLaptop(${index})">
+
+                            Return
+
+                        </button>`
+
+                        :
+
+                        "-"
+
+                    }
+
+                </td>
+
+            `;
+
+
+            table.appendChild(row);
+
+        });
+
+    }
+
+
+    /* ================================
+       ADD LAPTOP
+    ================================= */
+
+    function addLaptop() {
+
+        const input =
+            document.getElementById("newLaptopNumber");
+
+
+        const number =
+            input.value.trim();
+
+
+        if (!number) {
+
+            alert("Enter a laptop number.");
+
+            return;
+        }
+
+
+        const exists =
+            laptops.some(
+                laptop =>
+                laptop.number.toLowerCase() ===
+                number.toLowerCase()
+            );
+
+
+        if (exists) {
+
+            alert("Laptop number already exists.");
+
+            return;
+        }
+
+
+        laptops.push({
+
+            number: number,
+
+            status: "Available",
+
+            image: laptopImage
+
+        });
+
+
+        input.value = "";
+
+
+        alert(
+            number +
+            " has been added."
+        );
+
+
+        updateAdmin();
+
+        renderDashboardLaptops();
+
+    }
+
+
+    /* ================================
+       REMOVE LAPTOP
+    ================================= */
+
+    function removeLaptop(number) {
+
+        const laptop =
+            laptops.find(
+                item =>
+                item.number === number
+            );
+
+
+        if (!laptop) {
+
+            return;
+        }
+
+
+        if (laptop.status === "Borrowed") {
+
+            alert(
+                "You cannot remove a borrowed laptop."
+            );
+
+            return;
+        }
+
+
+        if (!confirm("Remove " + number + "?")) {
+
+            return;
+        }
+
+
+        laptops =
+            laptops.filter(
+                item =>
+                item.number !== number
+            );
+
+
+        updateAdmin();
+
+        renderDashboardLaptops();
+
+    }
+
+
+    /* ================================
+       ADMIN UPDATE
+    ================================= */
+
+    function updateAdmin() {
+
+        updateStatistics();
+
+        updateAdminLaptopTable();
+
+        updateRegisteredUsers();
+
+    }
+
+
+    /* ================================
+       ADMIN STATISTICS
+    ================================= */
+
+    function updateStatistics() {
+
+        const total =
+            laptops.length;
+
+
+        const available =
+            laptops.filter(
+                laptop =>
+                laptop.status === "Available"
+            ).length;
+
+
+        const borrowed =
+            laptops.filter(
+                laptop =>
+                laptop.status === "Borrowed"
+            ).length;
+
+
+        const users =
+            JSON.parse(
+                localStorage.getItem("users")
+            ) || [];
+
+
+        document.getElementById(
+            "totalLaptops"
+        ).textContent = total;
+
+
+        document.getElementById(
+            "availableLaptops"
+        ).textContent = available;
+
+
+        document.getElementById(
+            "borrowedLaptops"
+        ).textContent = borrowed;
+
+
+        document.getElementById(
+            "totalUsers"
+        ).textContent = users.length;
+
+    }
+
+
+    /* ================================
+       ADMIN LAPTOP TABLE
+    ================================= */
+
+    function updateAdminLaptopTable() {
+
+        const table =
+            document.getElementById(
+                "adminLaptopTable"
+            );
+
+
+        if (!table) {
+
+            return;
+        }
+
+
+        table.innerHTML = "";
+
+
+        if (laptops.length === 0) {
+
+            table.innerHTML = `
+
+                <tr>
+
+                    <td colspan="3">
+                        No laptops available.
+                    </td>
+
+                </tr>
+
+            `;
+
+            return;
+        }
+
+
+        laptops.forEach(laptop => {
+
+            const row =
+                document.createElement("tr");
+
+
+            row.innerHTML = `
+
+                <td>
+                    ${laptop.number}
+                </td>
+
+                <td>
+
+                    <span class="${
+                        laptop.status === "Available"
+                        ? "status available"
+                        : "status borrowed"
+                    }">
+
+                        ${laptop.status}
+
+                    </span>
+
+                </td>
+
+                <td>
+
+                    <button
+                        class="delete-btn"
+                        onclick="removeLaptop('${laptop.number}')">
+
+                        <i class="fa-solid fa-trash"></i>
+
+                        Remove
+
+                    </button>
+
+                </td>
+
+            `;
+
+
+            table.appendChild(row);
+
+        });
+
+    }
+
+
+    /* ================================
+       REGISTERED USERS TABLE
+    ================================= */
+
+    function updateRegisteredUsers() {
+
+        const table =
+            document.getElementById(
+                "registeredUsersTable"
+            );
+
+
+        if (!table) {
+
+            return;
+        }
+
+
+        table.innerHTML = "";
+
+
+        const users =
+            JSON.parse(
+                localStorage.getItem("users")
+            ) || [];
+
+
+        if (users.length === 0) {
+
+            table.innerHTML = `
+
+                <tr>
+
+                    <td colspan="3">
+                        No registered users.
+                    </td>
+
+                </tr>
+
+            `;
+
+            return;
+        }
+
+
+        users.forEach(user => {
+
+            const row =
+                document.createElement("tr");
+
+
+            row.innerHTML = `
+
+                <td>
+                    ${user.name || "N/A"}
+                </td>
+
+                <td>
+                    ${user.studentID || "Not provided"}
+                </td>
+
+                <td>
+                    ${user.username || "N/A"}
+                </td>
+
+            `;
+
+
+            table.appendChild(row);
+
+        });
+
+    }
+
+
+    /* ================================
+       LOGOUT
+    ================================= */
+
+    function logout() {
+
+        currentUser = null;
+
+
+        document.getElementById(
+            "loginUsername"
+        ).value = "";
+
+
+        document.getElementById(
+            "loginPassword"
+        ).value = "";
+
+
+        showLogin();
+
+    }
+
+
+    /* ================================
+       INITIALIZE
+    ================================= */
+
+    showLogin();
+
+</script>
+
+</body>
+</html>
+```
