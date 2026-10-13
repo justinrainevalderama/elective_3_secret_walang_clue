@@ -1,13 +1,390 @@
-<!doctype html>
+```html
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>frontend</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Laptop Borrowing System</title>
+
+    <!-- Font Awesome Icons -->
+    <link rel="stylesheet"
+          href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css">
+
+    <!-- Main CSS -->
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <!-- LOGIN PAGE -->
+    <div id="loginPage">
+        <div class="auth-container">
+            <h1>Laptop Borrowing System</h1>
+            <p>Login to your account</p>
+
+            <div class="form-group">
+                <label for="loginUsername">Email</label>
+                <input type="email" id="loginUsername"
+                       placeholder="Enter email" autocomplete="email">
+            </div>
+
+            <div class="form-group">
+                <label for="loginPassword">Password</label>
+                <input type="password" id="loginPassword"
+                       placeholder="Enter password" autocomplete="current-password">
+            </div>
+
+            <button class="primary-btn" onclick="login()">Login</button>
+
+            <div class="auth-link">
+                Don't have an account?
+                <a onclick="showRegister()">Register</a>
+            </div>
+        </div>
+    </div>
+
+    <!-- REGISTER PAGE -->
+    <div id="registerPage" style="display:none;">
+        <div class="auth-container">
+            <h1>Create Account</h1>
+            <p>Register for the Laptop Borrowing System</p>
+
+            <div class="form-group">
+                <label for="registerName">Full Name</label>
+                <input type="text" id="registerName"
+                       placeholder="Enter full name" autocomplete="name">
+            </div>
+
+            <div class="form-group">
+                <label for="registerStudentID">Student ID</label>
+                <input type="text" id="registerStudentID"
+                       placeholder="Enter student ID">
+            </div>
+
+            <div class="form-group">
+                <label for="registerUsername">Email</label>
+                <input type="email" id="registerUsername"
+                       placeholder="Enter email" autocomplete="email">
+            </div>
+
+            <div class="form-group">
+                <label for="registerPassword">Password</label>
+                <input type="password" id="registerPassword"
+                       placeholder="Create password" autocomplete="new-password">
+            </div>
+
+            <div class="form-group">
+                <label for="registerConfirmPassword">Confirm Password</label>
+                <input type="password" id="registerConfirmPassword"
+                       placeholder="Confirm password" autocomplete="new-password">
+            </div>
+
+            <button class="primary-btn" onclick="registerUser()">Register</button>
+
+            <div class="auth-link">
+                Already have an account?
+                <a onclick="showLogin()">Login</a>
+            </div>
+        </div>
+    </div>
+
+    <!-- STUDENT SYSTEM -->
+    <div id="userSystem" style="display:none;">
+
+        <!-- STUDENT SIDEBAR -->
+        <div class="sidebar">
+            <div class="sidebar-logo">
+                <i class="fa-solid fa-laptop"></i>
+                <h2>Laptop System</h2>
+            </div>
+
+            <ul class="sidebar-menu">
+                <li>
+                    <button class="active"
+                            onclick="showUserPage('dashboardPage', this)">
+                        <i class="fa-solid fa-laptop"></i>
+                        <span>Dashboard</span>
+                    </button>
+                </li>
+
+                <li>
+                    <button onclick="showUserPage('historyPage', this)">
+                        <i class="fa-solid fa-clock-rotate-left"></i>
+                        <span>Borrowing History</span>
+                    </button>
+                </li>
+
+                <li>
+                    <button onclick="showUserPage('profilePage', this)">
+                        <i class="fa-solid fa-user"></i>
+                        <span>Profile</span>
+                    </button>
+                </li>
+
+                <li class="sidebar-logout">
+                    <button class="logout-btn" onclick="logout()">
+                        <i class="fa-solid fa-right-from-bracket"></i>
+                        <span>Logout</span>
+                    </button>
+                </li>
+            </ul>
+        </div>
+
+        <!-- STUDENT MAIN CONTENT -->
+        <div class="main-content">
+            <header class="top-header">
+                <div>
+                    <h1>Laptop Borrowing System</h1>
+                    <p>Computerized Laptop Borrowing and Management</p>
+                </div>
+
+                <div class="header-user">
+                    <i class="fa-solid fa-circle-user"></i>
+                    <span id="headerUserName">User</span>
+                </div>
+            </header>
+
+            <!-- STUDENT DASHBOARD -->
+            <div id="dashboardPage" class="page active">
+                <div class="page-title">
+                    <h1>Dashboard</h1>
+                    <p>Manage your laptop borrowing activity.</p>
+                </div>
+
+                <div class="welcome-box">
+                    <h2>Welcome, <span id="welcomeName"></span>!</h2>
+                    <p>
+                        You can borrow available laptops and view your
+                        borrowing history here.
+                    </p>
+                </div>
+
+                <h2 style="color:#172b3a; font-size:17px; margin-bottom:15px;">
+                    Available Laptops
+                </h2>
+
+                <div class="laptop-grid" id="dashboardLaptopGrid"></div>
+            </div>
+
+            <!-- STUDENT BORROWING HISTORY -->
+            <div id="historyPage" class="page">
+                <div class="page-title">
+                    <h1>My Borrowing History</h1>
+                    <p>View your laptop borrowing records.</p>
+                </div>
+
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Laptop</th>
+                                <th>Borrow Date</th>
+                                <th>Borrow Time</th>
+                                <th>Return Date</th>
+                                <th>Return Time</th>
+                                <th>Status</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="historyTable"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- STUDENT PROFILE -->
+            <div id="profilePage" class="page">
+                <div class="page-title">
+                    <h1>My Profile</h1>
+                    <p>Your registered account information.</p>
+                </div>
+
+                <div class="welcome-box">
+                    <h3>Full Name</h3>
+                    <p id="profileName"></p>
+
+                    <br>
+
+                    <h3>Student ID</h3>
+                    <p id="profileStudentID"></p>
+
+                    <br>
+
+                    <h3>Email</h3>
+                    <p id="profileUsername"></p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ADMIN SYSTEM -->
+    <div id="adminSystem" style="display:none;">
+
+        <!-- ADMIN SIDEBAR -->
+        <div class="sidebar">
+            <div class="sidebar-logo">
+                <i class="fa-solid fa-laptop"></i>
+                <h2>Admin Panel</h2>
+            </div>
+
+            <ul class="sidebar-menu">
+                <li>
+                    <button class="active"
+                            onclick="showAdminPage('adminDashboard', this)">
+                        <i class="fa-solid fa-house"></i>
+                        <span>Dashboard</span>
+                    </button>
+                </li>
+
+                <li>
+                    <button onclick="showAdminPage('manageLaptopsPage', this)">
+                        <i class="fa-solid fa-laptop"></i>
+                        <span>Manage Laptops</span>
+                    </button>
+                </li>
+
+                <li>
+                    <button onclick="showAdminPage('usersPage', this)">
+                        <i class="fa-solid fa-users"></i>
+                        <span>Registered Users</span>
+                    </button>
+                </li>
+
+                <li class="sidebar-logout">
+                    <button class="logout-btn" onclick="logout()">
+                        <i class="fa-solid fa-right-from-bracket"></i>
+                        <span>Logout</span>
+                    </button>
+                </li>
+            </ul>
+        </div>
+
+        <!-- ADMIN MAIN CONTENT -->
+        <div class="main-content">
+            <header class="top-header">
+                <div>
+                    <h1>Laptop Borrowing System</h1>
+                    <p>Administrator Dashboard</p>
+                </div>
+
+                <div class="header-user">
+                    <i class="fa-solid fa-circle-user"></i>
+                    <span>Administrator</span>
+                </div>
+            </header>
+
+            <!-- ADMIN DASHBOARD -->
+            <div id="adminDashboard" class="page active">
+                <div class="page-title">
+                    <h1>Dashboard</h1>
+                    <p>Manage laptops and registered users.</p>
+                </div>
+
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-icon">
+                            <i class="fa-solid fa-laptop"></i>
+                        </div>
+                        <h3>Total Laptops</h3>
+                        <p id="totalLaptops">0</p>
+                    </div>
+
+                    <div class="stat-card">
+                        <div class="stat-icon">
+                            <i class="fa-solid fa-circle-check"></i>
+                        </div>
+                        <h3>Available</h3>
+                        <p id="availableLaptops">0</p>
+                    </div>
+
+                    <div class="stat-card">
+                        <div class="stat-icon">
+                            <i class="fa-solid fa-clock"></i>
+                        </div>
+                        <h3>Borrowed</h3>
+                        <p id="borrowedLaptops">0</p>
+                    </div>
+
+                    <div class="stat-card">
+                        <div class="stat-icon">
+                            <i class="fa-solid fa-users"></i>
+                        </div>
+                        <h3>Registered Users</h3>
+                        <p id="totalUsers">0</p>
+                    </div>
+                </div>
+
+                <div class="dashboard-grid">
+                    <div class="dashboard-box">
+                        <h2>System Overview</h2>
+                        <p style="color:#777; font-size:13px; line-height:1.7;">
+                            Use the sidebar to manage laptops and view
+                            registered users. Laptop statistics update
+                            when laptops are borrowed or returned.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- MANAGE LAPTOPS -->
+            <div id="manageLaptopsPage" class="page">
+                <div class="page-title">
+                    <h1>Manage Laptops</h1>
+                    <p>Add or remove laptops from the system.</p>
+                </div>
+
+                <div class="admin-form">
+                    <h2>Add Laptop</h2>
+
+                    <div class="admin-form-row">
+                        <input type="text"
+                               id="newLaptopNumber"
+                               placeholder="Example: LAP-005">
+
+                        <button onclick="addLaptop()">
+                            <i class="fa-solid fa-plus"></i>
+                            Add Laptop
+                        </button>
+                    </div>
+                </div>
+
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Laptop Number</th>
+                                <th>Status</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="adminLaptopTable"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- REGISTERED USERS -->
+            <div id="usersPage" class="page">
+                <div class="page-title">
+                    <h1>Registered Users</h1>
+                    <p>View users registered in the system.</p>
+                </div>
+
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Full Name</th>
+                                <th>Student ID</th>
+                                <th>Email</th>
+                            </tr>
+                        </thead>
+                        <tbody id="registeredUsersTable"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- JAVASCRIPT -->
+    <script src="script.js"></script>
+</body>
 </html>
+```
