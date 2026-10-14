@@ -295,14 +295,16 @@ app.get("/api/laptops", async (req, res) => {
     }
 });
 
-// ========================================
-// borrowing
-// ========================================
 
+// ========================================
+// BORROW LAPTOP
+// POST /api/borrow
+// ========================================
 app.post("/api/borrow", async (req, res) => {
     try {
         const { userId, laptopId } = req.body;
 
+        // 1. Validate required fields
         if (!userId || !laptopId) {
             return res.status(400).json({
                 success: false,
@@ -310,14 +312,23 @@ app.post("/api/borrow", async (req, res) => {
             });
         }
 
-        // Check if the user is a student
+        // 2. Verify that the user is a student
         const { data: profile, error: profileError } = await supabase
             .from("profiles")
-            .select("account_type")
+            .select("id, account_type")
             .eq("id", userId)
-            .single();
+            .maybeSingle();
 
-        if (profileError || !profile) {
+        if (profileError) {
+            console.error("Profile lookup error:", profileError);
+
+            return res.status(500).json({
+                success: false,
+                message: "Failed to verify student account."
+            });
+        }
+
+        if (!profile) {
             return res.status(404).json({
                 success: false,
                 message: "User profile not found."
@@ -331,14 +342,23 @@ app.post("/api/borrow", async (req, res) => {
             });
         }
 
-        // Check if laptop exists and is available
+        // 3. Check the laptop's current status
         const { data: laptop, error: laptopError } = await supabase
             .from("laptops")
             .select("id, laptop_name, laptop_code, status")
             .eq("id", laptopId)
-            .single();
+            .maybeSingle();
 
-        if (laptopError || !laptop) {
+        if (laptopError) {
+            console.error("Laptop lookup error:", laptopError);
+
+            return res.status(500).json({
+                success: false,
+                message: "Failed to check laptop availability."
+            });
+        }
+
+        if (!laptop) {
             return res.status(404).json({
                 success: false,
                 message: "Laptop not found."
@@ -346,49 +366,100 @@ app.post("/api/borrow", async (req, res) => {
         }
 
         if (laptop.status !== "available") {
-            return res.status(400).json({
+            return res.status(409).json({
                 success: false,
-                message: "Laptop is unavailable."
+                message: "This laptop has already been borrowed or is unavailable."
             });
         }
 
-        // Create borrowing record
-        const { data: borrowing, error: borrowingError } = await supabase
-            .from("borrowings")
-            .insert({
-                user_id: userId,
-                laptop_id: laptopId,
-                status: "borrowed"
-            })
-            .select()
-            .single();
+        // 4. Check whether this student already has an active
+        // borrowing record for this laptop.
+        const { data: existingBorrowings, error: existingError } =
+            await supabase
+                .from("borrowings")
+                .select("id")
+                .eq("user_id", userId)
+                .eq("laptop_id", laptopId)
+                .eq("status", "borrowed")
+                .limit(1);
+
+        if (existingError) {
+            console.error("Existing borrowing lookup error:", existingError);
+
+            return res.status(500).json({
+                success: false,
+                message: "Failed to check existing borrowing records."
+            });
+        }
+
+        if (existingBorrowings && existingBorrowings.length > 0) {
+            return res.status(409).json({
+                success: false,
+                message: "You have already borrowed this laptop."
+            });
+        }
+
+        // 5. Create the borrowing record
+        const { data: borrowing, error: borrowingError } =
+            await supabase
+                .from("borrowings")
+                .insert({
+                    user_id: userId,
+                    laptop_id: laptopId,
+                    status: "borrowed"
+                })
+                .select()
+                .single();
 
         if (borrowingError) {
-            console.error("Borrowing error:", borrowingError);
+            console.error("Borrowing insert error:", borrowingError);
+
+            // PostgreSQL error 23505 means a unique constraint
+            // was violated, for example by a simultaneous request.
+            if (borrowingError.code === "23505") {
+                return res.status(409).json({
+                    success: false,
+                    message: "This laptop has already been borrowed. Please refresh the page."
+                });
+            }
 
             return res.status(500).json({
                 success: false,
-                message: "Failed to borrow laptop."
+                message: "Failed to create borrowing record."
             });
         }
 
-        // Change laptop status to borrowed
-        const { error: updateError } = await supabase
+        // 6. Update the laptop's status
+        const { data: updatedLaptop, error: updateError } = await supabase
             .from("laptops")
-            .update({
-                status: "borrowed"
-            })
-            .eq("id", laptopId);
+            .update({ status: "borrowed" })
+            .eq("id", laptopId)
+            .eq("status", "available")
+            .select("id")
+            .maybeSingle();
 
-        if (updateError) {
-            console.error("Laptop status error:", updateError);
+        if (updateError || !updatedLaptop) {
+            console.error("Laptop status update error:", updateError);
 
-            return res.status(500).json({
+            // Compensate by removing the active borrowing record
+            // if the laptop could not be marked as borrowed.
+            const { error: rollbackError } = await supabase
+                .from("borrowings")
+                .delete()
+                .eq("id", borrowing.id)
+                .eq("status", "borrowed");
+
+            if (rollbackError) {
+                console.error("Borrowing rollback error:", rollbackError);
+            }
+
+            return res.status(409).json({
                 success: false,
-                message: "Borrowing was recorded, but laptop status could not be updated."
+                message: "The laptop is no longer available. Please refresh and try again."
             });
         }
 
+        // 7. Return success
         return res.status(201).json({
             success: true,
             message: "Laptop borrowed successfully.",
@@ -396,7 +467,7 @@ app.post("/api/borrow", async (req, res) => {
         });
 
     } catch (error) {
-        console.error("Server error:", error);
+        console.error("Borrow laptop server error:", error);
 
         return res.status(500).json({
             success: false,
@@ -406,15 +477,16 @@ app.post("/api/borrow", async (req, res) => {
 });
 
 
+
 // ========================================
 // RETURN LAPTOP
 // POST /api/return
+// Handles accidental duplicate active records
 // ========================================
 app.post("/api/return", async (req, res) => {
     try {
         const { userId, laptopId } = req.body;
 
-        // Validate required fields
         if (!userId || !laptopId) {
             return res.status(400).json({
                 success: false,
@@ -422,9 +494,7 @@ app.post("/api/return", async (req, res) => {
             });
         }
 
-        console.log("Return request:", { userId, laptopId });
-
-        // Verify that the user exists
+        // Verify the student
         const { data: profile, error: profileError } = await supabase
             .from("profiles")
             .select("id, account_type")
@@ -433,7 +503,6 @@ app.post("/api/return", async (req, res) => {
 
         if (profileError) {
             console.error("Profile lookup error:", profileError);
-
             return res.status(500).json({
                 success: false,
                 message: "Failed to verify user."
@@ -450,93 +519,79 @@ app.post("/api/return", async (req, res) => {
         if (profile.account_type !== "student") {
             return res.status(403).json({
                 success: false,
-                message: "Only students can return borrowed laptops."
+                message: "Only students can return laptops."
             });
         }
 
-        // Find the student's active borrowing record
-        const { data: borrowing, error: borrowingError } = await supabase
-            .from("borrowings")
-            .select("id, user_id, laptop_id, status")
-            .eq("user_id", userId)
-            .eq("laptop_id", laptopId)
-            .eq("status", "borrowed")
-            .maybeSingle();
+        // IMPORTANT: Use select() to retrieve all matching records.
+        // Do not use maybeSingle(), because duplicates may exist.
+        const { data: activeBorrowings, error: borrowingError } =
+            await supabase
+                .from("borrowings")
+                .select("id")
+                .eq("user_id", userId)
+                .eq("laptop_id", laptopId)
+                .eq("status", "borrowed");
 
         if (borrowingError) {
             console.error("Borrowing lookup error:", borrowingError);
-
             return res.status(500).json({
                 success: false,
                 message: "Failed to check the active borrowing record."
             });
         }
 
-        if (!borrowing) {
+        if (!activeBorrowings || activeBorrowings.length === 0) {
             return res.status(404).json({
                 success: false,
-                message: "No active borrowing record was found for this laptop."
+                message: "No active borrowing record was found."
             });
         }
 
-        // Mark the borrowing record as returned
-        const { data: updatedBorrowing, error: updateBorrowingError } =
-            await supabase
-                .from("borrowings")
-                .update({
-                    status: "returned",
-                    returned_at: new Date().toISOString()
-                })
-                .eq("id", borrowing.id)
-                .eq("user_id", userId)
-                .eq("status", "borrowed")
-                .select("id")
-                .maybeSingle();
+        const borrowingIds = activeBorrowings.map(record => record.id);
 
-        if (updateBorrowingError) {
-            console.error(
-                "Update borrowing error:",
-                updateBorrowingError
-            );
+        // Mark every duplicate active record as returned.
+        const { error: updateBorrowingsError } = await supabase
+            .from("borrowings")
+            .update({
+                status: "returned",
+                returned_at: new Date().toISOString()
+            })
+            .in("id", borrowingIds)
+            .eq("status", "borrowed");
 
+        if (updateBorrowingsError) {
+            console.error("Update borrowing error:", updateBorrowingsError);
             return res.status(500).json({
                 success: false,
-                message: "Failed to update the borrowing record."
+                message: "Failed to update the borrowing records."
             });
         }
 
-        if (!updatedBorrowing) {
-            return res.status(409).json({
-                success: false,
-                message: "This borrowing record has already been returned."
-            });
-        }
+        // Make the laptop available again.
+        const { error: updateLaptopError } = await supabase
+            .from("laptops")
+            .update({ status: "available" })
+            .eq("id", laptopId);
 
-        // Make the laptop available again
-        const { data: updatedLaptop, error: updateLaptopError } =
-            await supabase
-                .from("laptops")
-                .update({ status: "available" })
-                .eq("id", borrowing.laptop_id)
-                .select("id")
-                .maybeSingle();
-
-        if (updateLaptopError || !updatedLaptop) {
-            console.error(
-                "Update laptop error:",
-                updateLaptopError
-            );
-
+        if (updateLaptopError) {
+            console.error("Update laptop error:", updateLaptopError);
             return res.status(500).json({
                 success: false,
                 message:
-                    "The borrowing was marked returned, but the laptop status could not be updated. Please contact the administrator."
+                    "The borrowing records were updated, but the laptop status could not be changed. Please contact the administrator."
             });
         }
 
+        console.log(
+            `Returned laptop ${laptopId}; closed ${borrowingIds.length} active record(s).`
+        );
+
         return res.status(200).json({
             success: true,
-            message: "Laptop returned successfully."
+            message: borrowingIds.length > 1
+                ? `Laptop returned successfully. ${borrowingIds.length} duplicate active records were closed.`
+                : "Laptop returned successfully."
         });
 
     } catch (error) {
@@ -548,6 +603,7 @@ app.post("/api/return", async (req, res) => {
         });
     }
 });
+
 
 
 
@@ -985,6 +1041,106 @@ app.get("/api/admin/logs", async (req, res) => {
         });
     }
 });
+
+// ========================================
+// GET ALL REGISTERED USERS
+// GET /api/admin/users?userId=ADMIN_ID
+// ========================================
+app.get("/api/admin/users", async (req, res) => {
+    try {
+        const { userId } = req.query;
+
+        if (!userId) {
+            return res.status(400).json({
+                success: false,
+                message: "Admin ID is required."
+            });
+        }
+
+        // Verify admin access
+        if (!(await checkAdmin(userId))) {
+            return res.status(403).json({
+                success: false,
+                message: "Admin access required."
+            });
+        }
+
+        // Get all profiles
+        const { data: profiles, error: profileError } = await supabase
+            .from("profiles")
+            .select("id, full_name, institutional_id, account_type");
+
+        if (profileError) {
+            console.error("Profiles error:", profileError);
+
+            return res.status(500).json({
+                success: false,
+                message: "Failed to retrieve registered users."
+            });
+        }
+
+        // Retrieve every Supabase Auth user, including users
+        // who have never borrowed a laptop.
+        let authUsers = [];
+        let page = 1;
+        const perPage = 1000;
+
+        while (true) {
+            const { data, error } =
+                await supabase.auth.admin.listUsers({
+                    page,
+                    perPage
+                });
+
+            if (error) {
+                console.error("Auth users error:", error);
+
+                return res.status(500).json({
+                    success: false,
+                    message: "Failed to retrieve user email addresses."
+                });
+            }
+
+            const usersOnPage = data.users || [];
+            authUsers.push(...usersOnPage);
+
+            if (usersOnPage.length < perPage) {
+                break;
+            }
+
+            page++;
+        }
+
+        // Match each profile with its Auth account by user ID
+        const users = profiles.map(profile => {
+            const authUser = authUsers.find(
+                user => user.id === profile.id
+            );
+
+            return {
+                id: profile.id,
+                fullName: profile.full_name || "Unknown",
+                institutionalId: profile.institutional_id || "Not provided",
+                email: authUser?.email || "Not provided",
+                accountType: profile.account_type || "student"
+            };
+        });
+
+        return res.status(200).json({
+            success: true,
+            users
+        });
+
+    } catch (error) {
+        console.error("Registered users error:", error);
+
+        return res.status(500).json({
+            success: false,
+            message: "Internal server error."
+        });
+    }
+});
+
 
 // ========================================
 // START SERVER

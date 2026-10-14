@@ -187,24 +187,46 @@ async function registerUser() {
 // POST /api/login
 // ========================================
 
+
 async function login() {
-    const email = valueOf("loginUsername").toLowerCase();
-    const password = valueOf("loginPassword");
+    // Support either email input ID used in your HTML.
+    const emailInput =
+        document.getElementById("loginEmail") ||
+        document.getElementById("loginUsername");
+
+    const passwordInput = document.getElementById("loginPassword");
+
+    if (!emailInput || !passwordInput) {
+        console.error("Login input elements were not found.", {
+            emailInputFound: !!emailInput,
+            passwordInputFound: !!passwordInput
+        });
+
+        showMessage(
+            "Login form error. Check the email and password input IDs in index.html."
+        );
+        return;
+    }
+
+    const email = emailInput.value.trim().toLowerCase();
+    const password = passwordInput.value;
 
     if (!email || !password) {
-        return showMessage("Enter your email and password.");
+        showMessage("Enter your email and password.");
+        return;
     }
 
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-        return showMessage("Enter a valid email address.");
+        showMessage("Enter a valid email address.");
+        return;
     }
 
     try {
         const data = await apiRequest("/api/login", {
             method: "POST",
             body: {
-                email,
-                password
+                email: email,
+                password: password
             }
         });
 
@@ -212,7 +234,20 @@ async function login() {
 
         if (!currentUser || !currentUser.id) {
             throw new Error(
-                "Login succeeded, but the backend did not return a user ID."
+                "Login succeeded, but the backend did not return a valid user."
+            );
+        }
+
+        // Normalize the account type in case the backend returns account_type.
+        currentUser.accountType =
+            currentUser.accountType || currentUser.account_type;
+
+        if (
+            currentUser.accountType !== "admin" &&
+            currentUser.accountType !== "student"
+        ) {
+            throw new Error(
+                "Account type is missing or unsupported. Check the /api/login response."
             );
         }
 
@@ -229,26 +264,20 @@ async function login() {
         if (currentUser.accountType === "admin") {
             setVisible("userSystem", false);
             setVisible("adminSystem", true);
-
             await showAdminPage("adminDashboard", null);
-        } else if (currentUser.accountType === "student") {
+        } else {
             setVisible("adminSystem", false);
             setVisible("userSystem", true);
-
             updateUserInformation();
-
             await showUserPage("dashboardPage", null);
-        } else {
-            currentUser = null;
-            sessionStorage.removeItem("cpeBorrowingUser");
-
-            showLogin();
-            showMessage("This account type is not supported.");
         }
+
     } catch (error) {
-        showMessage(error.message);
+        console.error("Login error:", error);
+        showMessage(error.message || "Unable to log in. Please try again.");
     }
 }
+
 
 // ========================================
 // STUDENT PROFILE
@@ -344,6 +373,10 @@ async function showAdminPage(pageId, button) {
         await loadAdminLaptops();
     }
 
+    if (pageId === "adminDashboard") {
+    await loadRegisteredUserCount();
+}
+
     if (pageId === "usersPage") {
         await loadAdminLogs();
         updateRegisteredUsers();
@@ -434,14 +467,47 @@ function renderDashboardLaptops() {
     });
 }
 
+
+// Prevent multiple borrow requests from this page at once.
+const laptopsBeingBorrowed = new Set();
+
 // ========================================
 // BORROW LAPTOP
-// POST /api/borrow
 // ========================================
-
 async function borrowLaptop(laptopId) {
-    if (!currentUser) {
-        return showMessage("Please log in first.");
+    if (!currentUser || !currentUser.id) {
+        showMessage("Please log in first.");
+        return;
+    }
+
+    if (!laptopId) {
+        showMessage("Laptop ID is missing. Please refresh the page.");
+        return;
+    }
+
+    const id = String(laptopId);
+
+    if (laptopsBeingBorrowed.has(id)) {
+        return;
+    }
+
+    laptopsBeingBorrowed.add(id);
+
+    // Disable the clicked button while processing.
+    const buttons = Array.from(
+        document.querySelectorAll("button")
+    );
+
+    const clickedButton = buttons.find(button => {
+        const handlerText = button.getAttribute("onclick") || "";
+        return handlerText.includes(id) &&
+            /borrowLaptop/.test(handlerText);
+    });
+
+    if (clickedButton) {
+        clickedButton.disabled = true;
+        clickedButton.dataset.originalText = clickedButton.textContent;
+        clickedButton.textContent = "Processing...";
     }
 
     try {
@@ -449,32 +515,31 @@ async function borrowLaptop(laptopId) {
             method: "POST",
             body: {
                 userId: currentUser.id,
-                laptopId
+                laptopId: laptopId
             }
         });
 
-        const laptop = laptops.find(
-            item => String(item.id) === String(laptopId)
-        );
-
-        currentSessionBorrowings.push({
-            laptopId,
-            laptopCode: laptop?.number || laptop?.name || "Laptop",
-            borrowedAt: new Date().toISOString(),
-            returnedAt: null,
-            status: "borrowed"
-        });
-
-        showMessage(
-        data.message || "Laptop borrowed successfully."
-        );
+        showMessage(data.message || "Laptop borrowed successfully.");
 
         await loadLaptops();
         await loadBorrowingHistory();
+
     } catch (error) {
-        showMessage(error.message);
+        console.error("Borrow laptop error:", error);
+        showMessage(error.message || "Failed to borrow laptop.");
+
+    } finally {
+        laptopsBeingBorrowed.delete(id);
+
+        if (clickedButton) {
+            clickedButton.disabled = false;
+            clickedButton.textContent =
+                clickedButton.dataset.originalText || "Borrow";
+            delete clickedButton.dataset.originalText;
+        }
     }
 }
+
 
 
 // ========================================
@@ -820,26 +885,44 @@ async function loadAdminLogs() {
 // ADMIN: STATISTICS
 // ========================================
 
+
 function updateStatistics() {
     setText("totalLaptops", laptops.length);
 
     setText(
         "availableLaptops",
-        laptops.filter(
-            laptop => laptop.status === "available"
-        ).length
+        laptops.filter(laptop => laptop.status === "available").length
     );
 
     setText(
         "borrowedLaptops",
-        laptops.filter(
-            laptop => laptop.status === "borrowed"
-        ).length
+        laptops.filter(laptop => laptop.status === "borrowed").length
     );
-
-    // No registered-user count endpoint is currently available.
-    setText("totalUsers", "—");
 }
+
+async function loadRegisteredUserCount() {
+    if (!currentUser || currentUser.accountType !== "admin") {
+        setText("totalUsers", "—");
+        return;
+    }
+
+    try {
+        const data = await apiRequest(
+            `/api/admin/users?userId=${encodeURIComponent(currentUser.id)}`
+        );
+
+        const students = (data.users || []).filter(
+            user => user.accountType === "student"
+        );
+
+        setText("totalUsers", students.length);
+
+    } catch (error) {
+        console.error("Failed to load registered-user count:", error);
+        setText("totalUsers", "—");
+    }
+}
+
 
 // ========================================
 // ADMIN: LAPTOP TABLE
@@ -895,54 +978,89 @@ function updateAdminLaptopTable() {
 }
 
 // ========================================
-// ADMIN: REGISTERED USERS TABLE
+// DISPLAY REGISTERED USERS
 // ========================================
-
-function updateRegisteredUsers() {
+async function updateRegisteredUsers() {
     const table = document.getElementById("registeredUsersTable");
 
-    if (!table) return;
-
-    table.innerHTML = "";
-
-    const uniqueUsers = new Map();
-
-    adminLogs.forEach(log => {
-        if (log.student) {
-            uniqueUsers.set(
-                log.student.institutionalId,
-                log.student
-            );
-        }
-    });
-
-    if (uniqueUsers.size === 0) {
-        table.innerHTML = `
-            <tr>
-                <td colspan="3">
-                    No students found in the borrowing logs.
-                </td>
-            </tr>
-        `;
+    if (!table) {
+        console.error(
+            "Cannot find element with ID registeredUsersTable."
+        );
         return;
     }
 
-    uniqueUsers.forEach(student => {
-        const row = document.createElement("tr");
+    table.innerHTML = `
+        <tr>
+            <td colspan="3">Loading registered users...</td>
+        </tr>
+    `;
 
-        const nameCell = document.createElement("td");
-        nameCell.textContent = student.name || "Unknown";
+    try {
+        if (!currentUser || !currentUser.id) {
+            throw new Error("Please log in as an administrator.");
+        }
 
-        const idCell = document.createElement("td");
-        idCell.textContent =
-            student.institutionalId || "Not provided";
+        const data = await apiRequest(
+            `/api/admin/users?userId=${encodeURIComponent(currentUser.id)}`
+        );
 
-        const emailCell = document.createElement("td");
-        emailCell.textContent = student.email || "Not provided";
+        const users = data.users || [];
 
-        row.append(nameCell, idCell, emailCell);
-        table.appendChild(row);
-    });
+        table.innerHTML = "";
+
+        if (users.length === 0) {
+            table.innerHTML = `
+                <tr>
+                    <td colspan="3">No registered users found.</td>
+                </tr>
+            `;
+            return;
+        }
+
+        users.forEach(user => {
+            // Show student accounts in the student list.
+            if (user.accountType !== "student") {
+                return;
+            }
+
+            const row = document.createElement("tr");
+
+            const nameCell = document.createElement("td");
+            nameCell.textContent = user.fullName;
+
+            const idCell = document.createElement("td");
+            idCell.textContent = user.institutionalId;
+
+            const emailCell = document.createElement("td");
+            emailCell.textContent = user.email;
+
+            row.appendChild(nameCell);
+            row.appendChild(idCell);
+            row.appendChild(emailCell);
+
+            table.appendChild(row);
+        });
+
+        if (table.children.length === 0) {
+            table.innerHTML = `
+                <tr>
+                    <td colspan="3">No registered students found.</td>
+                </tr>
+            `;
+        }
+
+    } catch (error) {
+        console.error("Failed to load registered users:", error);
+
+        table.innerHTML = `
+            <tr>
+                <td colspan="3">Failed to load registered users.</td>
+            </tr>
+        `;
+
+        showMessage(error.message);
+    }
 }
 
 // ========================================
