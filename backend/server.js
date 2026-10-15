@@ -1,3 +1,4 @@
+
 require("dotenv").config();
 
 const express = require("express");
@@ -5,1151 +6,698 @@ const cors = require("cors");
 const { createClient } = require("@supabase/supabase-js");
 
 const app = express();
-
 const PORT = process.env.PORT || 3000;
 
-// Middleware
 app.use(cors());
 app.use(express.json());
 
-// Supabase connection
-const supabase = createClient(
-    process.env.SUPABASE_URL,
-    process.env.SUPABASE_SECRET_KEY
-);
-
-// ========================================
-// admin checker
-// ========================================
-
-async function checkAdmin(userId) {
-    if (!userId) {
-        return false;
-    }
-
-    const { data: profile, error } = await supabase
-        .from("profiles")
-        .select("account_type")
-        .eq("id", userId)
-        .single();
-
-    if (error || !profile) {
-        return false;
-    }
-
-    return profile.account_type === "admin";
+if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SECRET_KEY) {
+  console.error("Missing Supabase settings in .env");
+  process.exit(1);
 }
 
-// ========================================
-// TEST ROUTE
-// ========================================
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SECRET_KEY
+);
+
+const fail = (res, status, message) =>
+  res.status(status).json({ success: false, message });
+
+async function getProfile(userId) {
+  if (!userId) return null;
+
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id, full_name, institutional_id, account_type")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data;
+}
+
+async function isAdmin(userId) {
+  const profile = await getProfile(userId);
+  return profile?.account_type === "admin";
+}
+
+async function requireAdmin(userId, res) {
+  try {
+    if (userId && await isAdmin(userId)) return true;
+  } catch (error) {
+    console.error("Admin authorization error:", error.message);
+  }
+
+  fail(res, 403, "Admin access required.");
+  return false;
+}
 
 app.get("/", (req, res) => {
+  res.json({
+    success: true,
+    message: "CPE Laptop Borrowing Backend is running"
+  });
+});
 
-    res.json({
-        success: true,
-        message: "CPE Laptop Borrowing Backend is running!"
+// REGISTER STUDENT
+app.post("/api/register", async (req, res) => {
+  let userId;
+
+  try {
+    const { fullName, institutionalId, email, password } = req.body;
+
+    if (
+      !fullName?.trim() ||
+      !institutionalId?.trim() ||
+      !email?.trim() ||
+      !password
+    ) {
+      return fail(res, 400, "Please complete all fields.");
+    }
+
+    if (password.length < 8) {
+      return fail(res, 400, "Password must be at least 8 characters.");
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+
+    const { data: auth, error: authError } =
+      await supabase.auth.admin.createUser({
+        email: normalizedEmail,
+        password,
+        email_confirm: true
+      });
+
+    if (authError) {
+      return fail(res, 400, authError.message);
+    }
+
+    userId = auth.user.id;
+
+    const { error: profileError } = await supabase
+      .from("profiles")
+      .insert({
+        id: userId,
+        full_name: fullName.trim(),
+        institutional_id: institutionalId.trim(),
+        account_type: "student"
+      });
+
+    if (profileError) {
+      await supabase.auth.admin.deleteUser(userId);
+
+      return fail(
+        res,
+        400,
+        profileError.code === "23505"
+          ? "That institutional ID is already registered."
+          : "Unable to create the student profile."
+      );
+    }
+
+    return res.status(201).json({
+      success: true,
+      message: "Registration successful. You can now log in."
+    });
+  } catch (error) {
+    console.error("Registration error:", error);
+
+    if (userId) {
+      await supabase.auth.admin.deleteUser(userId).catch(() => {});
+    }
+
+    return fail(res, 500, "Registration failed.");
+  }
+});
+
+// LOGIN
+app.post("/api/login", async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return fail(res, 400, "Email and password are required.");
+    }
+
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: email.trim().toLowerCase(),
+      password
     });
 
-});
-
-
-// ========================================
-// CREATE ACCOUNT
-// ========================================
-
-app.post("/api/register", async (req, res) => {
-    try {
-        const {
-            fullName,
-            institutionalId,
-            email,
-            password
-        } = req.body;
-
-        // Check required fields
-        if (!fullName || !institutionalId || !email || !password) {
-            return res.status(400).json({
-                success: false,
-                message: "All fields are required."
-            });
-        }
-
-        // Check password length
-        if (password.length < 8) {
-            return res.status(400).json({
-                success: false,
-                message: "Password must be at least 8 characters."
-            });
-        }
-
-        // Create authentication account
-        const {
-            data: authData,
-            error: authError
-        } = await supabase.auth.admin.createUser({
-            email: email.trim().toLowerCase(),
-            password: password,
-            email_confirm: true
-        });
-
-        if (authError) {
-            console.error("Authentication error:", authError);
-
-            return res.status(400).json({
-                success: false,
-                message: authError.message
-            });
-        }
-
-        const userId = authData.user.id;
-
-        // Save student information
-        const { error: profileError } = await supabase
-            .from("profiles")
-            .insert({
-                id: userId,
-                full_name: fullName.trim(),
-                institutional_id: institutionalId.trim(),
-                account_type: "student"
-            });
-
-        if (profileError) {
-            console.error("Profile error:", profileError);
-
-            // Delete Auth account if profile creation fails
-            await supabase.auth.admin.deleteUser(userId);
-
-            return res.status(500).json({
-                success: false,
-                message: "Failed to save student information."
-            });
-        }
-
-        return res.status(201).json({
-            success: true,
-            message: "Student account created successfully.",
-            user: {
-                id: userId,
-                email: authData.user.email,
-                fullName: fullName,
-                institutionalId: institutionalId,
-                accountType: "student"
-            }
-        });
-
-    } catch (error) {
-        console.error("Server error:", error);
-
-        return res.status(500).json({
-            success: false,
-            message: "Internal server error."
-        });
+    if (error || !data.user) {
+      return fail(res, 401, "Invalid email or password.");
     }
-});
 
-// ========================================
-// LOGIN 
-// ========================================
+    const profile = await getProfile(data.user.id);
 
-app.post("/api/login", async (req, res) => {
-    try {
-        const { email, password } = req.body;
-
-        // Check required fields
-        if (!email || !password) {
-            return res.status(400).json({
-                success: false,
-                message: "Email and password are required."
-            });
-        }
-
-        // Login through Supabase Authentication
-        const {
-            data: authData,
-            error: authError
-        } = await supabase.auth.signInWithPassword({
-            email: email.trim().toLowerCase(),
-            password: password
-        });
-
-        if (authError) {
-            console.error("Login error:", authError);
-
-            return res.status(401).json({
-                success: false,
-                message: "Invalid email or password."
-            });
-        }
-
-        // Get the user's profile
-        const {
-            data: profile,
-            error: profileError
-        } = await supabase
-            .from("profiles")
-            .select("full_name, institutional_id, account_type")
-            .eq("id", authData.user.id)
-            .single();
-
-        if (profileError || !profile) {
-            console.error("Profile error:", profileError);
-
-            return res.status(500).json({
-                success: false,
-                message: "User profile could not be found."
-            });
-        }
-
-        // Check if the account is an admin
-        if (profile.account_type === "admin") {
-            return res.status(200).json({
-                success: true,
-                message: "Admin login successful.",
-                user: {
-                    id: authData.user.id,
-                    email: authData.user.email,
-                    fullName: profile.full_name,
-                    institutionalId: profile.institutional_id,
-                    accountType: "admin"
-                },
-                session: authData.session
-            });
-        }
-
-        // Student account
-        if (profile.account_type === "student") {
-            return res.status(200).json({
-                success: true,
-                message: "Student login successful.",
-                user: {
-                    id: authData.user.id,
-                    email: authData.user.email,
-                    fullName: profile.full_name,
-                    institutionalId: profile.institutional_id,
-                    accountType: "student"
-                },
-                session: authData.session
-            });
-        }
-
-        // Unknown account type
-        return res.status(403).json({
-            success: false,
-            message: "Invalid account type."
-        });
-
-    } catch (error) {
-        console.error("Server error:", error);
-
-        return res.status(500).json({
-            success: false,
-            message: "Internal server error."
-        });
+    if (!profile) {
+      return fail(res, 403, "Your profile was not found.");
     }
+
+    if (!["student", "admin"].includes(profile.account_type)) {
+      return fail(res, 403, "Invalid account type.");
+    }
+
+    return res.json({
+      success: true,
+      user: {
+        id: data.user.id,
+        email: data.user.email,
+        fullName: profile.full_name,
+        institutionalId: profile.institutional_id,
+        accountType: profile.account_type
+      },
+      session: data.session
+    });
+  } catch (error) {
+    console.error("Login error:", error);
+    return fail(res, 500, "Login failed.");
+  }
 });
 
-// ========================================
-// display laptop
-// ========================================
-
+// PUBLIC LAPTOP LIST
 app.get("/api/laptops", async (req, res) => {
-    try {
-        const { data: laptops, error } = await supabase
-            .from("laptops")
-            .select("id, laptop_name, laptop_code, status")
-            .order("laptop_code", { ascending: true });
+  try {
+    const { data, error } = await supabase
+      .from("laptops")
+      .select("id, laptop_name, laptop_code, status")
+      .order("laptop_code");
 
-        if (error) {
-            console.error("Laptop error:", error);
+    if (error) throw error;
 
-            return res.status(500).json({
-                success: false,
-                message: "Failed to retrieve laptops."
-            });
-        }
-
-        const laptopList = laptops.map((laptop) => ({
-            id: laptop.id,
-            name: laptop.laptop_name,
-            code: laptop.laptop_code,
-            status: laptop.status,
-            message:
-                laptop.status === "available"
-                    ? "Laptop is available."
-                    : "Laptop is unavailable."
-        }));
-
-        return res.status(200).json({
-            success: true,
-            laptops: laptopList
-        });
-
-    } catch (error) {
-        console.error("Server error:", error);
-
-        return res.status(500).json({
-            success: false,
-            message: "Internal server error."
-        });
-    }
+    res.json({
+      success: true,
+      laptops: (data || []).map(l => ({
+        id: l.id,
+        name: l.laptop_name,
+        code: l.laptop_code,
+        status: l.status
+      }))
+    });
+  } catch (error) {
+    console.error("Laptop list error:", error);
+    fail(res, 500, "Unable to load laptops.");
+  }
 });
 
-
-// ========================================
-// BORROW LAPTOP
-// POST /api/borrow
-// ========================================
+// STUDENT REQUESTS A LAPTOP
 app.post("/api/borrow", async (req, res) => {
-    try {
-        const { userId, laptopId } = req.body;
-
-        // 1. Validate required fields
-        if (!userId || !laptopId) {
-            return res.status(400).json({
-                success: false,
-                message: "User ID and laptop ID are required."
-            });
-        }
-
-        // 2. Verify that the user is a student
-        const { data: profile, error: profileError } = await supabase
-            .from("profiles")
-            .select("id, account_type")
-            .eq("id", userId)
-            .maybeSingle();
-
-        if (profileError) {
-            console.error("Profile lookup error:", profileError);
-
-            return res.status(500).json({
-                success: false,
-                message: "Failed to verify student account."
-            });
-        }
-
-        if (!profile) {
-            return res.status(404).json({
-                success: false,
-                message: "User profile not found."
-            });
-        }
-
-        if (profile.account_type !== "student") {
-            return res.status(403).json({
-                success: false,
-                message: "Only students can borrow laptops."
-            });
-        }
-
-        // 3. Check the laptop's current status
-        const { data: laptop, error: laptopError } = await supabase
-            .from("laptops")
-            .select("id, laptop_name, laptop_code, status")
-            .eq("id", laptopId)
-            .maybeSingle();
-
-        if (laptopError) {
-            console.error("Laptop lookup error:", laptopError);
-
-            return res.status(500).json({
-                success: false,
-                message: "Failed to check laptop availability."
-            });
-        }
-
-        if (!laptop) {
-            return res.status(404).json({
-                success: false,
-                message: "Laptop not found."
-            });
-        }
-
-        if (laptop.status !== "available") {
-            return res.status(409).json({
-                success: false,
-                message: "This laptop has already been borrowed or is unavailable."
-            });
-        }
-
-        // 4. Check whether this student already has an active
-        // borrowing record for this laptop.
-        const { data: existingBorrowings, error: existingError } =
-            await supabase
-                .from("borrowings")
-                .select("id")
-                .eq("user_id", userId)
-                .eq("laptop_id", laptopId)
-                .eq("status", "borrowed")
-                .limit(1);
-
-        if (existingError) {
-            console.error("Existing borrowing lookup error:", existingError);
-
-            return res.status(500).json({
-                success: false,
-                message: "Failed to check existing borrowing records."
-            });
-        }
-
-        if (existingBorrowings && existingBorrowings.length > 0) {
-            return res.status(409).json({
-                success: false,
-                message: "You have already borrowed this laptop."
-            });
-        }
-
-        // 5. Create the borrowing record
-        const { data: borrowing, error: borrowingError } =
-            await supabase
-                .from("borrowings")
-                .insert({
-                    user_id: userId,
-                    laptop_id: laptopId,
-                    status: "borrowed"
-                })
-                .select()
-                .single();
-
-        if (borrowingError) {
-            console.error("Borrowing insert error:", borrowingError);
-
-            // PostgreSQL error 23505 means a unique constraint
-            // was violated, for example by a simultaneous request.
-            if (borrowingError.code === "23505") {
-                return res.status(409).json({
-                    success: false,
-                    message: "This laptop has already been borrowed. Please refresh the page."
-                });
-            }
-
-            return res.status(500).json({
-                success: false,
-                message: "Failed to create borrowing record."
-            });
-        }
-
-        // 6. Update the laptop's status
-        const { data: updatedLaptop, error: updateError } = await supabase
-            .from("laptops")
-            .update({ status: "borrowed" })
-            .eq("id", laptopId)
-            .eq("status", "available")
-            .select("id")
-            .maybeSingle();
-
-        if (updateError || !updatedLaptop) {
-            console.error("Laptop status update error:", updateError);
-
-            // Compensate by removing the active borrowing record
-            // if the laptop could not be marked as borrowed.
-            const { error: rollbackError } = await supabase
-                .from("borrowings")
-                .delete()
-                .eq("id", borrowing.id)
-                .eq("status", "borrowed");
-
-            if (rollbackError) {
-                console.error("Borrowing rollback error:", rollbackError);
-            }
-
-            return res.status(409).json({
-                success: false,
-                message: "The laptop is no longer available. Please refresh and try again."
-            });
-        }
-
-        // 7. Return success
-        return res.status(201).json({
-            success: true,
-            message: "Laptop borrowed successfully.",
-            borrowing: borrowing
-        });
-
-    } catch (error) {
-        console.error("Borrow laptop server error:", error);
-
-        return res.status(500).json({
-            success: false,
-            message: "Internal server error."
-        });
+  try {
+    const { userId, laptopId } = req.body;
+    if (!userId || !laptopId) {
+      return fail(res, 400, "User ID and laptop ID are required.");
     }
+
+    const profile = await getProfile(userId);
+    if (!profile || profile.account_type !== "student") {
+      return fail(res, 403, "Only registered students can borrow laptops.");
+    }
+
+    const { data: laptop, error: laptopError } = await supabase
+      .from("laptops")
+      .select("id, status")
+      .eq("id", laptopId)
+      .maybeSingle();
+
+    if (laptopError) throw laptopError;
+    if (!laptop) return fail(res, 404, "Laptop not found.");
+    if (laptop.status !== "available") {
+      return fail(res, 409, "This laptop is not available.");
+    }
+
+    const { data: existing, error: existingError } = await supabase
+      .from("borrowings")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("laptop_id", laptopId)
+      .in("status", ["pending", "borrowed"])
+      .limit(1);
+
+    if (existingError) throw existingError;
+    if (existing?.length) {
+      return fail(res, 409, "You already have a pending request or active borrowing for this laptop.");
+    }
+
+    const { error } = await supabase.from("borrowings").insert({
+      user_id: userId,
+      laptop_id: laptopId,
+      status: "pending",
+      borrowed_at: new Date().toISOString()
+    });
+
+    if (error) throw error;
+
+    res.status(201).json({
+      success: true,
+      message: "Request submitted. Wait for admin approval."
+    });
+  } catch (error) {
+    console.error("Borrow request error:", error);
+    fail(res, 500, "Unable to submit the borrowing request.");
+  }
 });
 
-
-
-// ========================================
-// RETURN LAPTOP
-// POST /api/return
-// Handles accidental duplicate active records
-// ========================================
-app.post("/api/return", async (req, res) => {
-    try {
-        const { userId, laptopId } = req.body;
-
-        if (!userId || !laptopId) {
-            return res.status(400).json({
-                success: false,
-                message: "User ID and Laptop ID are required."
-            });
-        }
-
-        // Verify the student
-        const { data: profile, error: profileError } = await supabase
-            .from("profiles")
-            .select("id, account_type")
-            .eq("id", userId)
-            .maybeSingle();
-
-        if (profileError) {
-            console.error("Profile lookup error:", profileError);
-            return res.status(500).json({
-                success: false,
-                message: "Failed to verify user."
-            });
-        }
-
-        if (!profile) {
-            return res.status(404).json({
-                success: false,
-                message: "User profile was not found."
-            });
-        }
-
-        if (profile.account_type !== "student") {
-            return res.status(403).json({
-                success: false,
-                message: "Only students can return laptops."
-            });
-        }
-
-        // IMPORTANT: Use select() to retrieve all matching records.
-        // Do not use maybeSingle(), because duplicates may exist.
-        const { data: activeBorrowings, error: borrowingError } =
-            await supabase
-                .from("borrowings")
-                .select("id")
-                .eq("user_id", userId)
-                .eq("laptop_id", laptopId)
-                .eq("status", "borrowed");
-
-        if (borrowingError) {
-            console.error("Borrowing lookup error:", borrowingError);
-            return res.status(500).json({
-                success: false,
-                message: "Failed to check the active borrowing record."
-            });
-        }
-
-        if (!activeBorrowings || activeBorrowings.length === 0) {
-            return res.status(404).json({
-                success: false,
-                message: "No active borrowing record was found."
-            });
-        }
-
-        const borrowingIds = activeBorrowings.map(record => record.id);
-
-        // Mark every duplicate active record as returned.
-        const { error: updateBorrowingsError } = await supabase
-            .from("borrowings")
-            .update({
-                status: "returned",
-                returned_at: new Date().toISOString()
-            })
-            .in("id", borrowingIds)
-            .eq("status", "borrowed");
-
-        if (updateBorrowingsError) {
-            console.error("Update borrowing error:", updateBorrowingsError);
-            return res.status(500).json({
-                success: false,
-                message: "Failed to update the borrowing records."
-            });
-        }
-
-        // Make the laptop available again.
-        const { error: updateLaptopError } = await supabase
-            .from("laptops")
-            .update({ status: "available" })
-            .eq("id", laptopId);
-
-        if (updateLaptopError) {
-            console.error("Update laptop error:", updateLaptopError);
-            return res.status(500).json({
-                success: false,
-                message:
-                    "The borrowing records were updated, but the laptop status could not be changed. Please contact the administrator."
-            });
-        }
-
-        console.log(
-            `Returned laptop ${laptopId}; closed ${borrowingIds.length} active record(s).`
-        );
-
-        return res.status(200).json({
-            success: true,
-            message: borrowingIds.length > 1
-                ? `Laptop returned successfully. ${borrowingIds.length} duplicate active records were closed.`
-                : "Laptop returned successfully."
-        });
-
-    } catch (error) {
-        console.error("Return laptop server error:", error);
-
-        return res.status(500).json({
-            success: false,
-            message: "Internal server error."
-        });
-    }
-});
-
-
-
-
-/* ========================================
-   STUDENT BORROWING HISTORY
-   GET /api/borrowings/:userId
-======================================== */
-
+// STUDENT HISTORY
 app.get("/api/borrowings/:userId", async (req, res) => {
-    try {
-        const { userId } = req.params;
+  try {
+    const profile = await getProfile(req.params.userId);
+    if (!profile) return fail(res, 404, "Profile not found.");
 
-        if (!userId) {
-            return res.status(400).json({
-                success: false,
-                message: "User ID is required."
-            });
-        }
+    const { data: records, error } = await supabase
+      .from("borrowings")
+      .select("id, user_id, laptop_id, status, borrowed_at, returned_at")
+      .eq("user_id", req.params.userId)
+      .order("borrowed_at", { ascending: false });
 
-        // Confirm that this profile exists and is a student.
-        const { data: profile, error: profileError } =
-            await supabase
-                .from("profiles")
-                .select("id, account_type")
-                .eq("id", userId)
-                .single();
+    if (error) throw error;
 
-        if (profileError || !profile) {
-            return res.status(404).json({
-                success: false,
-                message: "Student profile not found."
-            });
-        }
+    const laptopIds = [...new Set((records || []).map(r => r.laptop_id))];
+    let laptopMap = new Map();
 
-        if (profile.account_type !== "student") {
-            return res.status(403).json({
-                success: false,
-                message: "Only students can access this endpoint."
-            });
-        }
+    if (laptopIds.length) {
+      const result = await supabase
+        .from("laptops")
+        .select("id, laptop_name, laptop_code")
+        .in("id", laptopIds);
 
-        // Retrieve all borrowing records for this student.
-        const { data: borrowings, error: borrowingError } =
-            await supabase
-                .from("borrowings")
-                .select(`
-                    id,
-                    user_id,
-                    laptop_id,
-                    status,
-                    borrowed_at,
-                    returned_at
-                `)
-                .eq("user_id", userId)
-                .order("borrowed_at", { ascending: false });
-
-        if (borrowingError) {
-            console.error("History error:", borrowingError);
-
-            return res.status(500).json({
-                success: false,
-                message: "Failed to retrieve borrowing history."
-            });
-        }
-
-        const laptopIds = [
-            ...new Set(
-                (borrowings || []).map(record => record.laptop_id)
-            )
-        ];
-
-        let laptopMap = new Map();
-
-        if (laptopIds.length > 0) {
-            const { data: laptopRecords, error: laptopError } =
-                await supabase
-                    .from("laptops")
-                    .select("id, laptop_name, laptop_code")
-                    .in("id", laptopIds);
-
-            if (laptopError) {
-                console.error("Laptop history error:", laptopError);
-
-                return res.status(500).json({
-                    success: false,
-                    message: "Failed to retrieve laptop details."
-                });
-            }
-
-            laptopMap = new Map(
-                (laptopRecords || []).map(laptop => [
-                    String(laptop.id),
-                    laptop
-                ])
-            );
-        }
-
-        const history = (borrowings || []).map(record => {
-            const laptop = laptopMap.get(String(record.laptop_id));
-
-            return {
-                id: record.id,
-                laptopId: record.laptop_id,
-                laptopCode: laptop?.laptop_code || "Laptop removed",
-                laptopName: laptop?.laptop_name || "Laptop removed",
-                status: record.status,
-                borrowedAt: record.borrowed_at,
-                returnedAt: record.returned_at
-            };
-        });
-
-        return res.status(200).json({
-            success: true,
-            history
-        });
-
-    } catch (error) {
-        console.error("Server error:", error);
-
-        return res.status(500).json({
-            success: false,
-            message: "Internal server error."
-        });
+      if (result.error) throw result.error;
+      laptopMap = new Map((result.data || []).map(l => [l.id, l]));
     }
+
+    const history = (records || []).map(r => {
+      const laptop = laptopMap.get(r.laptop_id);
+
+      return {
+        id: r.id,
+        laptopId: r.laptop_id,
+        laptopName: laptop?.laptop_name || "Laptop removed",
+        laptopCode: laptop?.laptop_code || "—",
+        status: r.status,
+        requestedAt: r.borrowed_at,
+        borrowedAt: r.borrowed_at,
+        returnedAt: r.returned_at
+      };
+    });
+
+    res.json({ success: true, history });
+  } catch (error) {
+    console.error("History error:", error);
+    fail(res, 500, "Unable to load borrowing history.");
+  }
 });
 
+// STUDENT RETURNS A LAPTOP
+app.post("/api/return", async (req, res) => {
+  try {
+    const { userId, laptopId } = req.body;
+    if (!userId || !laptopId) {
+      return fail(res, 400, "User ID and laptop ID are required.");
+    }
 
-// ========================================
-// display laptops (admin)
-// ========================================
+    const { data: record, error } = await supabase
+      .from("borrowings")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("laptop_id", laptopId)
+      .eq("status", "borrowed")
+      .order("borrowed_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
 
+    if (error) throw error;
+    if (!record) return fail(res, 404, "No active borrowing found.");
+
+    const { data: updated, error: updateError } = await supabase
+      .from("borrowings")
+      .update({
+        status: "returned",
+        returned_at: new Date().toISOString()
+      })
+      .eq("id", record.id)
+      .eq("status", "borrowed")
+      .select("id")
+      .maybeSingle();
+
+    if (updateError) throw updateError;
+    if (!updated) return fail(res, 409, "This borrowing was already processed.");
+
+    const { error: laptopError } = await supabase
+      .from("laptops")
+      .update({ status: "available" })
+      .eq("id", laptopId)
+      .eq("status", "borrowed");
+
+    if (laptopError) throw laptopError;
+
+    res.json({ success: true, message: "Laptop returned successfully." });
+  } catch (error) {
+    console.error("Return error:", error);
+    fail(res, 500, "Unable to return laptop.");
+  }
+});
+
+// ADMIN: VIEW INVENTORY
 app.get("/api/admin/laptops", async (req, res) => {
-    try {
-        const { userId } = req.query;
+  try {
+    if (!await requireAdmin(req.query.userId, res)) return;
 
-        if (!await checkAdmin(userId)) {
-            return res.status(403).json({
-                success: false,
-                message: "Admin access required."
-            });
-        }
+    const { data, error } = await supabase
+      .from("laptops")
+      .select("id, laptop_name, laptop_code, status")
+      .order("laptop_code");
 
-        const { data: laptops, error } = await supabase
-            .from("laptops")
-            .select("id, laptop_name, laptop_code, status")
-            .order("laptop_code", { ascending: true });
-
-        if (error) {
-            console.error("Laptop error:", error);
-
-            return res.status(500).json({
-                success: false,
-                message: "Failed to retrieve laptops."
-            });
-        }
-
-        return res.status(200).json({
-            success: true,
-            laptops: laptops
-        });
-
-    } catch (error) {
-        console.error("Server error:", error);
-
-        return res.status(500).json({
-            success: false,
-            message: "Internal server error."
-        });
-    }
+    if (error) throw error;
+    res.json({ success: true, laptops: data || [] });
+  } catch (error) {
+    console.error("Admin inventory error:", error);
+    fail(res, 500, "Unable to load inventory.");
+  }
 });
 
-// ========================================
-// add laptops
-// ========================================
-
+// ADMIN: ADD LAPTOP
 app.post("/api/admin/laptops", async (req, res) => {
-    try {
-        const {
-            userId,
-            laptopName,
-            laptopCode
-        } = req.body;
+  try {
+    const { userId, laptopName, laptopCode } = req.body;
+    if (!await requireAdmin(userId, res)) return;
 
-        if (!userId || !laptopName || !laptopCode) {
-            return res.status(400).json({
-                success: false,
-                message: "Admin ID, laptop name, and laptop code are required."
-            });
-        }
-
-        // Check admin
-        if (!await checkAdmin(userId)) {
-            return res.status(403).json({
-                success: false,
-                message: "Admin access required."
-            });
-        }
-
-        // Add laptop
-        const { data: laptop, error } = await supabase
-            .from("laptops")
-            .insert({
-                laptop_name: laptopName.trim(),
-                laptop_code: laptopCode.trim(),
-                status: "available"
-            })
-            .select()
-            .single();
-
-        if (error) {
-            console.error("Add laptop error:", error);
-
-            return res.status(400).json({
-                success: false,
-                message: "Failed to add laptop. Laptop code may already exist."
-            });
-        }
-
-        return res.status(201).json({
-            success: true,
-            message: "Laptop added successfully.",
-            laptop: laptop
-        });
-
-    } catch (error) {
-        console.error("Server error:", error);
-
-        return res.status(500).json({
-            success: false,
-            message: "Internal server error."
-        });
+    if (!laptopName?.trim() || !laptopCode?.trim()) {
+      return fail(res, 400, "Laptop name and code are required.");
     }
+
+    const { data, error } = await supabase
+      .from("laptops")
+      .insert({
+        laptop_name: laptopName.trim(),
+        laptop_code: laptopCode.trim(),
+        status: "available"
+      })
+      .select()
+      .single();
+
+    if (error) {
+      if (error.code === "23505") {
+        return fail(res, 409, "That laptop code already exists.");
+      }
+      throw error;
+    }
+
+    res.status(201).json({
+      success: true,
+      message: "Laptop added successfully.",
+      laptop: data
+    });
+  } catch (error) {
+    console.error("Add laptop error:", error);
+    fail(res, 500, "Unable to add laptop.");
+  }
 });
 
-// ========================================
-// remove laptop
-// ========================================
+// ADMIN: REMOVE LAPTOP
+app.delete("/api/admin/laptops/:id", async (req, res) => {
+  try {
+    if (!await requireAdmin(req.body.userId || req.query.userId, res)) return;
 
-app.delete("/api/admin/laptops/:laptopId", async (req, res) => {
-    try {
-        const { userId } = req.body;
-        const { laptopId } = req.params;
+    const { data: laptop, error } = await supabase
+      .from("laptops")
+      .select("id, status")
+      .eq("id", req.params.id)
+      .maybeSingle();
 
-        if (!userId || !laptopId) {
-            return res.status(400).json({
-                success: false,
-                message: "Admin ID and laptop ID are required."
-            });
-        }
-
-        // Check admin
-        if (!await checkAdmin(userId)) {
-            return res.status(403).json({
-                success: false,
-                message: "Admin access required."
-            });
-        }
-
-        // Check laptop
-        const { data: laptop, error: laptopError } = await supabase
-            .from("laptops")
-            .select("id, laptop_name, laptop_code, status")
-            .eq("id", laptopId)
-            .single();
-
-        if (laptopError || !laptop) {
-            return res.status(404).json({
-                success: false,
-                message: "Laptop not found."
-            });
-        }
-
-        // Don't allow removal of borrowed laptop
-        if (laptop.status === "borrowed") {
-            return res.status(400).json({
-                success: false,
-                message: "Cannot remove a laptop that is currently borrowed."
-            });
-        }
-
-        // Delete laptop
-        const { error: deleteError } = await supabase
-            .from("laptops")
-            .delete()
-            .eq("id", laptopId);
-
-        if (deleteError) {
-            console.error("Delete laptop error:", deleteError);
-
-            return res.status(500).json({
-                success: false,
-                message: "Failed to remove laptop."
-            });
-        }
-
-        return res.status(200).json({
-            success: true,
-            message: "Laptop removed successfully."
-        });
-
-    } catch (error) {
-        console.error("Server error:", error);
-
-        return res.status(500).json({
-            success: false,
-            message: "Internal server error."
-        });
+    if (error) throw error;
+    if (!laptop) return fail(res, 404, "Laptop not found.");
+    if (laptop.status === "borrowed") {
+      return fail(res, 409, "Cannot remove a currently borrowed laptop.");
     }
+
+    const { data: pending, error: pendingError } = await supabase
+      .from("borrowings")
+      .select("id")
+      .eq("laptop_id", laptop.id)
+      .eq("status", "pending")
+      .limit(1);
+
+    if (pendingError) throw pendingError;
+    if (pending?.length) {
+      return fail(res, 409, "This laptop has a pending request.");
+    }
+
+    const { error: deleteError } = await supabase
+      .from("laptops")
+      .delete()
+      .eq("id", laptop.id);
+
+    if (deleteError) throw deleteError;
+
+    res.json({ success: true, message: "Laptop removed successfully." });
+  } catch (error) {
+    console.error("Remove laptop error:", error);
+    fail(res, 500, "Unable to remove laptop.");
+  }
 });
 
-// ========================================
-// laptop logs  
-// ========================================
+// ADMIN: VIEW PENDING REQUESTS
+app.get("/api/admin/requests", async (req, res) => {
+  try {
+    if (!await requireAdmin(req.query.userId, res)) return;
 
-app.get("/api/admin/logs", async (req, res) => {
-    try {
-        const { userId } = req.query;
+    const { data: requests, error } = await supabase
+      .from("borrowings")
+      .select("id, user_id, laptop_id, status, borrowed_at")
+      .eq("status", "pending")
+      .order("borrowed_at", { ascending: true });
 
-        if (!userId) {
-            return res.status(400).json({
-                success: false,
-                message: "Admin ID is required."
-            });
-        }
+    if (error) throw error;
 
-        // Check admin
-        if (!await checkAdmin(userId)) {
-            return res.status(403).json({
-                success: false,
-                message: "Admin access required."
-            });
-        }
+    const userIds = [...new Set((requests || []).map(r => r.user_id))];
+    const laptopIds = [...new Set((requests || []).map(r => r.laptop_id))];
 
-        // Get borrowing records
-        const { data: borrowings, error: borrowingError } = await supabase
-            .from("borrowings")
-            .select(`
-                id,
-                user_id,
-                laptop_id,
-                status,
-                borrowed_at,
-                returned_at
-            `)
-            .order("borrowed_at", { ascending: false });
+    let profileMap = new Map();
+    let laptopMap = new Map();
 
-        if (borrowingError) {
-            console.error("Logs error:", borrowingError);
+    if (userIds.length) {
+      const result = await supabase
+        .from("profiles")
+        .select("id, full_name, institutional_id")
+        .in("id", userIds);
 
-            return res.status(500).json({
-                success: false,
-                message: "Failed to retrieve logs."
-            });
-        }
-
-        // Get users
-        const userIds = [
-            ...new Set(borrowings.map((record) => record.user_id))
-        ];
-
-        const { data: profiles, error: profileError } = await supabase
-            .from("profiles")
-            .select("id, full_name, institutional_id")
-            .in("id", userIds);
-
-        if (profileError) {
-            console.error("Profile error:", profileError);
-
-            return res.status(500).json({
-                success: false,
-                message: "Failed to retrieve student information."
-            });
-        }
-
-        // Get laptops
-        const laptopIds = [
-            ...new Set(borrowings.map((record) => record.laptop_id))
-        ];
-
-        const { data: laptops, error: laptopError } = await supabase
-            .from("laptops")
-            .select("id, laptop_name, laptop_code")
-            .in("id", laptopIds);
-
-        if (laptopError) {
-            console.error("Laptop error:", laptopError);
-
-            return res.status(500).json({
-                success: false,
-                message: "Failed to retrieve laptop information."
-            });
-        }
-
-        // Combine the information
-        const logs = borrowings.map((record) => {
-
-            const student = profiles.find(
-                (profile) => profile.id === record.user_id
-            );
-
-            const laptop = laptops.find(
-                (laptop) => laptop.id === record.laptop_id
-            );
-
-            return {
-                id: record.id,
-
-                student: {
-                    name: student?.full_name || "Unknown",
-                    institutionalId: student?.institutional_id || "Unknown"
-                },
-
-                laptop: {
-                    name: laptop?.laptop_name || "Unknown",
-                    code: laptop?.laptop_code || "Unknown"
-                },
-
-                status: record.status,
-                borrowedAt: record.borrowed_at,
-                returnedAt: record.returned_at
-            };
-        });
-
-        return res.status(200).json({
-            success: true,
-            logs: logs
-        });
-
-    } catch (error) {
-        console.error("Server error:", error);
-
-        return res.status(500).json({
-            success: false,
-            message: "Internal server error."
-        });
+      if (result.error) throw result.error;
+      profileMap = new Map((result.data || []).map(p => [p.id, p]));
     }
+
+    if (laptopIds.length) {
+      const result = await supabase
+        .from("laptops")
+        .select("id, laptop_name, laptop_code")
+        .in("id", laptopIds);
+
+      if (result.error) throw result.error;
+      laptopMap = new Map((result.data || []).map(l => [l.id, l]));
+    }
+
+    const formatted = (requests || []).map(r => {
+      const student = profileMap.get(r.user_id);
+      const laptop = laptopMap.get(r.laptop_id);
+
+      return {
+        id: r.id,
+        studentName: student?.full_name || "Unknown",
+        institutionalId: student?.institutional_id || "Unknown",
+        laptopName: laptop?.laptop_name || "Laptop removed",
+        laptopCode: laptop?.laptop_code || "—",
+        status: r.status,
+        requestedAt: r.borrowed_at
+      };
+    });
+
+    res.json({ success: true, requests: formatted });
+  } catch (error) {
+    console.error("Request list error:", error);
+    fail(res, 500, "Unable to load borrow requests.");
+  }
 });
 
-// ========================================
-// GET ALL REGISTERED USERS
-// GET /api/admin/users?userId=ADMIN_ID
-// ========================================
+// ADMIN: ACCEPT OR REJECT A REQUEST
+app.post("/api/admin/requests/:id", async (req, res) => {
+  try {
+    const { userId, decision } = req.body;
+    if (!await requireAdmin(userId, res)) return;
+
+    if (!["accept", "reject"].includes(decision)) {
+      return fail(res, 400, "Decision must be accept or reject.");
+    }
+
+    const { data: request, error } = await supabase
+      .from("borrowings")
+      .select("id, laptop_id, status")
+      .eq("id", req.params.id)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!request) return fail(res, 404, "Request not found.");
+    if (request.status !== "pending") {
+      return fail(res, 409, "This request has already been processed.");
+    }
+
+    if (decision === "reject") {
+      const { data: rejected, error: rejectError } = await supabase
+        .from("borrowings")
+        .update({ status: "rejected" })
+        .eq("id", request.id)
+        .eq("status", "pending")
+        .select("id")
+        .maybeSingle();
+
+      if (rejectError) throw rejectError;
+      if (!rejected) return fail(res, 409, "Request already processed.");
+
+      return res.json({
+        success: true,
+        message: "Borrow request rejected."
+      });
+    }
+
+    // Reserve the laptop only if it is still available.
+    const { data: reserved, error: reserveError } = await supabase
+      .from("laptops")
+      .update({ status: "borrowed" })
+      .eq("id", request.laptop_id)
+      .eq("status", "available")
+      .select("id")
+      .maybeSingle();
+
+    if (reserveError) throw reserveError;
+    if (!reserved) {
+      return fail(res, 409, "Laptop is no longer available.");
+    }
+
+    const { data: accepted, error: acceptError } = await supabase
+      .from("borrowings")
+      .update({ status: "borrowed" })
+      .eq("id", request.id)
+      .eq("status", "pending")
+      .select("id")
+      .maybeSingle();
+
+    if (acceptError || !accepted) {
+      await supabase.from("laptops")
+        .update({ status: "available" })
+        .eq("id", request.laptop_id)
+        .eq("status", "borrowed");
+
+      if (acceptError) throw acceptError;
+      return fail(res, 409, "Request was already processed.");
+    }
+
+    res.json({
+      success: true,
+      message: "Request accepted. Laptop is now marked as borrowed."
+    });
+  } catch (error) {
+    console.error("Decision error:", error);
+    fail(res, 500, "Unable to process the request.");
+  }
+});
+
+// ADMIN: USERS
 app.get("/api/admin/users", async (req, res) => {
-    try {
-        const { userId } = req.query;
+  try {
+    if (!await requireAdmin(req.query.userId, res)) return;
 
-        if (!userId) {
-            return res.status(400).json({
-                success: false,
-                message: "Admin ID is required."
-            });
-        }
+    const { data: profiles, error } = await supabase
+      .from("profiles")
+      .select("id, full_name, institutional_id, account_type")
+      .order("full_name");
 
-        // Verify admin access
-        if (!(await checkAdmin(userId))) {
-            return res.status(403).json({
-                success: false,
-                message: "Admin access required."
-            });
-        }
+    if (error) throw error;
 
-        // Get all profiles
-        const { data: profiles, error: profileError } = await supabase
-            .from("profiles")
-            .select("id, full_name, institutional_id, account_type");
+    const { data: authData, error: authError } =
+      await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
 
-        if (profileError) {
-            console.error("Profiles error:", profileError);
+    if (authError) throw authError;
 
-            return res.status(500).json({
-                success: false,
-                message: "Failed to retrieve registered users."
-            });
-        }
-
-        // Retrieve every Supabase Auth user, including users
-        // who have never borrowed a laptop.
-        let authUsers = [];
-        let page = 1;
-        const perPage = 1000;
-
-        while (true) {
-            const { data, error } =
-                await supabase.auth.admin.listUsers({
-                    page,
-                    perPage
-                });
-
-            if (error) {
-                console.error("Auth users error:", error);
-
-                return res.status(500).json({
-                    success: false,
-                    message: "Failed to retrieve user email addresses."
-                });
-            }
-
-            const usersOnPage = data.users || [];
-            authUsers.push(...usersOnPage);
-
-            if (usersOnPage.length < perPage) {
-                break;
-            }
-
-            page++;
-        }
-
-        // Match each profile with its Auth account by user ID
-        const users = profiles.map(profile => {
-            const authUser = authUsers.find(
-                user => user.id === profile.id
-            );
-
-            return {
-                id: profile.id,
-                fullName: profile.full_name || "Unknown",
-                institutionalId: profile.institutional_id || "Not provided",
-                email: authUser?.email || "Not provided",
-                accountType: profile.account_type || "student"
-            };
-        });
-
-        return res.status(200).json({
-            success: true,
-            users
-        });
-
-    } catch (error) {
-        console.error("Registered users error:", error);
-
-        return res.status(500).json({
-            success: false,
-            message: "Internal server error."
-        });
-    }
-});
-
-
-// ========================================
-// START SERVER
-// ========================================
-
-app.listen(PORT, () => {
-
-    console.log(
-        `CPE Laptop Borrowing Backend running on http://localhost:${PORT}`
+    const emailMap = new Map(
+      (authData.users || []).map(u => [u.id, u.email])
     );
 
+    const users = (profiles || []).map(p => ({
+      fullName: p.full_name,
+      institutionalId: p.institutional_id,
+      accountType: p.account_type,
+      email: emailMap.get(p.id) || "—"
+    }));
+
+    res.json({ success: true, users });
+  } catch (error) {
+    console.error("Users error:", error);
+    fail(res, 500, "Unable to load users.");
+  }
+});
+
+// ADMIN: BORROWING LOGS
+app.get("/api/admin/logs", async (req, res) => {
+  try {
+    if (!await requireAdmin(req.query.userId, res)) return;
+
+    const { data: records, error } = await supabase
+      .from("borrowings")
+      .select("id, user_id, laptop_id, status, borrowed_at, returned_at")
+      .order("borrowed_at", { ascending: false });
+
+    if (error) throw error;
+
+    const userIds = [...new Set((records || []).map(r => r.user_id))];
+    const laptopIds = [...new Set((records || []).map(r => r.laptop_id))];
+
+    let profileMap = new Map();
+    let laptopMap = new Map();
+
+    if (userIds.length) {
+      const result = await supabase
+        .from("profiles")
+        .select("id, full_name, institutional_id")
+        .in("id", userIds);
+
+      if (result.error) throw result.error;
+      profileMap = new Map((result.data || []).map(p => [p.id, p]));
+    }
+
+    if (laptopIds.length) {
+      const result = await supabase
+        .from("laptops")
+        .select("id, laptop_name, laptop_code")
+        .in("id", laptopIds);
+
+      if (result.error) throw result.error;
+      laptopMap = new Map((result.data || []).map(l => [l.id, l]));
+    }
+
+    const logs = (records || []).map(r => {
+      const p = profileMap.get(r.user_id);
+      const l = laptopMap.get(r.laptop_id);
+
+      return {
+        student: {
+          name: p?.full_name || "Unknown",
+          institutionalId: p?.institutional_id || "Unknown"
+        },
+        laptop: {
+          name: l?.laptop_name || "Laptop removed",
+          code: l?.laptop_code || "—"
+        },
+        status: r.status,
+        borrowedAt: r.borrowed_at,
+        returnedAt: r.returned_at
+      };
+    });
+
+    res.json({ success: true, logs });
+  } catch (error) {
+    console.error("Logs error:", error);
+    fail(res, 500, "Unable to load borrowing logs.");
+  }
+});
+
+app.listen(PORT, () => {
+  console.log(`Backend running at http://localhost:${PORT}`);
 });

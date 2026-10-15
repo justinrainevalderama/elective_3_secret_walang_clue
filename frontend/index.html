@@ -1,388 +1,218 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Laptop Borrowing System</title>
-
-    <!-- Font Awesome Icons -->
-    <link rel="stylesheet"
-          href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css">
-
-    <!-- Main CSS -->
-    <link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CPE Laptop Borrowing System</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
 </head>
 <body>
 
-    <!-- LOGIN PAGE -->
-    <div id="loginPage">
-        <div class="auth-container">
-            <h1>Laptop Borrowing System</h1>
-            <p>Login to your account</p>
+<!-- LOGIN -->
+<section id="loginPage" class="auth-container">
+  <h1>CPE Laptop Borrowing</h1>
+  <p>Sign in to your account</p>
+  <form id="loginForm">
+    <div class="form-group">
+      <label for="loginEmail">Institutional Email</label>
+      <input id="loginEmail" type="email" required>
+    </div>
+    <div class="form-group">
+      <label for="loginPassword">Password</label>
+      <input id="loginPassword" type="password" required>
+    </div>
+    <button class="primary-btn" type="submit">Log In</button>
+    <p id="loginMessage" class="feedback"></p>
+  </form>
+  <div class="auth-link">Don't have an account?
+    <a href="#" id="showRegister">Register here</a>
+  </div>
+</section>
 
-            <div class="form-group">
-                <label for="loginUsername">Email</label>
-                <input type="email" id="loginUsername"
-                       placeholder="Enter email" autocomplete="email">
-            </div>
+<!-- REGISTER -->
+<section id="registerPage" class="auth-container hidden">
+  <h1>Student Registration</h1>
+  <p>Create your student account</p>
+  <form id="registerForm">
+    <div class="form-group">
+      <label for="registerName">Full Name</label>
+      <input id="registerName" required>
+    </div>
+    <div class="form-group">
+      <label for="registerID">Institutional ID</label>
+      <input id="registerID" required>
+    </div>
+    <div class="form-group">
+      <label for="registerEmail">Institutional Email</label>
+      <input id="registerEmail" type="email" required>
+    </div>
+    <div class="form-group">
+      <label for="registerPassword">Password (minimum 8 characters)</label>
+      <input id="registerPassword" type="password" minlength="8" required>
+    </div>
+    <div class="form-group">
+      <label for="confirmPassword">Confirm Password</label>
+      <input id="confirmPassword" type="password" minlength="8" required>
+    </div>
+    <button class="primary-btn" type="submit">Create Account</button>
+    <p id="registerMessage" class="feedback"></p>
+  </form>
+  <div class="auth-link">Already registered?
+    <a href="#" id="showLogin">Back to login</a>
+  </div>
+</section>
 
-            <div class="form-group">
-                <label for="loginPassword">Password</label>
-                <input type="password" id="loginPassword"
-                       placeholder="Enter password" autocomplete="current-password">
-            </div>
-
-            <button class="primary-btn" onclick="login()">Login</button>
-
-            <div class="auth-link">
-                Don't have an account?
-                <a onclick="showRegister()">Register</a>
-            </div>
-        </div>
+<!-- APPLICATION -->
+<div id="appShell" class="hidden">
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <i class="fas fa-laptop"></i>
+      <h2>CPE Borrowing</h2>
     </div>
 
-    <!-- REGISTER PAGE -->
-    <div id="registerPage" style="display:none;">
-        <div class="auth-container">
-            <h1>Create Account</h1>
-            <p>Register for the Laptop Borrowing System</p>
+    <ul id="studentMenu" class="sidebar-menu hidden">
+      <li><button class="active" data-page="studentDashboard"><i class="fas fa-home"></i><span>Dashboard</span></button></li>
+      <li><button data-page="studentHistory"><i class="fas fa-history"></i><span>My History</span></button></li>
+      <li><button data-page="studentProfile"><i class="fas fa-user"></i><span>My Profile</span></button></li>
+      <li class="sidebar-logout"><button class="logout-btn" id="studentLogout"><i class="fas fa-sign-out-alt"></i><span>Log Out</span></button></li>
+    </ul>
 
-            <div class="form-group">
-                <label for="registerName">Full Name</label>
-                <input type="text" id="registerName"
-                       placeholder="Enter full name" autocomplete="name">
-            </div>
+    <ul id="adminMenu" class="sidebar-menu hidden">
+      <li><button class="active" data-page="adminDashboard"><i class="fas fa-chart-pie"></i><span>Dashboard</span></button></li>
+      <li><button data-page="borrowRequests"><i class="fas fa-clipboard-list"></i><span>Borrow Requests</span></button></li>
+      <li><button data-page="manageLaptops"><i class="fas fa-laptop"></i><span>Manage Laptops</span></button></li>
+      <li><button data-page="registeredUsers"><i class="fas fa-users"></i><span>Registered Users</span></button></li>
+      <li><button data-page="borrowingLogs"><i class="fas fa-file-alt"></i><span>Borrowing Logs</span></button></li>
+      <li class="sidebar-logout"><button class="logout-btn" id="adminLogout"><i class="fas fa-sign-out-alt"></i><span>Log Out</span></button></li>
+    </ul>
+  </aside>
 
-            <div class="form-group">
-                <label for="registerStudentID">Student ID</label>
-                <input type="text" id="registerStudentID"
-                       placeholder="Enter student ID">
-            </div>
+  <main class="main-content">
+    <header class="top-header">
+      <div>
+        <h1 id="headerTitle">Dashboard</h1>
+        <p>CPE Laptop Borrowing System</p>
+      </div>
+      <div class="header-user">
+        <i class="fas fa-user-circle"></i>
+        <span id="headerUser">User</span>
+      </div>
+    </header>
 
-            <div class="form-group">
-                <label for="registerUsername">Email</label>
-                <input type="email" id="registerUsername"
-                       placeholder="Enter email" autocomplete="email">
-            </div>
+    <!-- STUDENT DASHBOARD -->
+    <section id="studentDashboard" class="page active">
+      <div class="welcome-box">
+        <h2>Welcome, <span id="welcomeName">Student</span>!</h2>
+        <p>Browse available laptops and submit a borrowing request. Admin approval is required.</p>
+      </div>
+      <div class="page-toolbar">
+        <h2>Available Laptops</h2>
+        <input id="laptopSearch" class="search-box" placeholder="Search laptops...">
+      </div>
+      <p id="laptopMessage" class="feedback"></p>
+      <div id="laptopGrid" class="laptop-grid"></div>
+    </section>
 
-            <div class="form-group">
-                <label for="registerPassword">Password</label>
-                <input type="password" id="registerPassword"
-                       placeholder="Create password" autocomplete="new-password">
-            </div>
+    <!-- STUDENT HISTORY -->
+    <section id="studentHistory" class="page">
+      <div class="page-title"><h1>My Borrowing History</h1><p>Track your requests, borrowed laptops, and returns.</p></div>
+      <div class="table-container">
+        <table>
+          <thead><tr><th>Laptop Code</th><th>Laptop Name</th><th>Request Date</th><th>Return Date</th><th>Status</th><th>Action</th></tr></thead>
+          <tbody id="historyTable"></tbody>
+        </table>
+      </div>
+      <p id="historyMessage" class="feedback"></p>
+    </section>
 
-            <div class="form-group">
-                <label for="registerConfirmPassword">Confirm Password</label>
-                <input type="password" id="registerConfirmPassword"
-                       placeholder="Confirm password" autocomplete="new-password">
-            </div>
+    <!-- STUDENT PROFILE -->
+    <section id="studentProfile" class="page">
+      <div class="page-title"><h1>My Profile</h1><p>Your registered account information.</p></div>
+      <div class="welcome-box">
+        <p><strong>Full Name:</strong> <span id="profileName"></span></p>
+        <p><strong>Institutional ID:</strong> <span id="profileID"></span></p>
+        <p><strong>Email:</strong> <span id="profileEmail"></span></p>
+        <p><strong>Account Type:</strong> <span id="profileType"></span></p>
+      </div>
+    </section>
 
-            <button class="primary-btn" onclick="registerUser()">Register</button>
+    <!-- ADMIN DASHBOARD -->
+    <section id="adminDashboard" class="page">
+      <div class="page-title"><h1>Admin Dashboard</h1><p>Overview of the laptop inventory and borrowing activity.</p></div>
+      <div class="stats-grid">
+        <div class="stat-card"><div class="stat-icon"><i class="fas fa-laptop"></i></div><h3>Total Laptops</h3><p id="statTotal">0</p></div>
+        <div class="stat-card"><div class="stat-icon"><i class="fas fa-check-circle"></i></div><h3>Available</h3><p id="statAvailable">0</p></div>
+        <div class="stat-card"><div class="stat-icon"><i class="fas fa-hand-holding"></i></div><h3>Borrowed</h3><p id="statBorrowed">0</p></div>
+        <div class="stat-card"><div class="stat-icon"><i class="fas fa-clock"></i></div><h3>Pending Requests</h3><p id="statPending">0</p></div>
+      </div>
+      <div class="dashboard-box">
+        <h2>Borrowing Requests</h2>
+        <p>Review student requests and approve or reject them.</p><br>
+        <button class="primary-btn compact-btn" data-goto="borrowRequests">Review Requests</button>
+      </div>
+    </section>
 
-            <div class="auth-link">
-                Already have an account?
-                <a onclick="showLogin()">Login</a>
-            </div>
-        </div>
-    </div>
+    <!-- ADMIN REQUESTS -->
+    <section id="borrowRequests" class="page">
+      <div class="page-title"><h1>Borrow Requests</h1><p>Accept or reject pending laptop requests.</p></div>
+      <div class="table-container">
+        <table>
+          <thead><tr><th>Student</th><th>Institutional ID</th><th>Laptop</th><th>Request Date</th><th>Status</th><th>Action</th></tr></thead>
+          <tbody id="requestsTable"></tbody>
+        </table>
+      </div>
+      <p id="requestsMessage" class="feedback"></p>
+      <button id="refreshRequests" class="secondary-btn">Refresh Requests</button>
+    </section>
 
-    <!-- STUDENT SYSTEM -->
-    <div id="userSystem" style="display:none;">
+    <!-- ADMIN INVENTORY -->
+    <section id="manageLaptops" class="page">
+      <div class="page-title"><h1>Manage Laptops</h1><p>Add and manage laptops in the inventory.</p></div>
+      <div class="admin-form">
+        <h2>Add New Laptop</h2>
+        <form id="addLaptopForm" class="admin-form-row">
+          <input id="newLaptopName" placeholder="Laptop name/model" required>
+          <input id="newLaptopCode" placeholder="Laptop code" required>
+          <button type="submit"><i class="fas fa-plus"></i> Add Laptop</button>
+        </form>
+        <p id="inventoryMessage" class="feedback"></p>
+      </div>
+      <div class="table-container">
+        <table>
+          <thead><tr><th>Laptop Code</th><th>Laptop Name</th><th>Status</th><th>Action</th></tr></thead>
+          <tbody id="inventoryTable"></tbody>
+        </table>
+      </div>
+    </section>
 
-        <!-- STUDENT SIDEBAR -->
-        <div class="sidebar">
-            <div class="sidebar-logo">
-                <i class="fa-solid fa-laptop"></i>
-                <h2>Laptop System</h2>
-            </div>
+    <!-- USERS -->
+    <section id="registeredUsers" class="page">
+      <div class="page-title"><h1>Registered Users</h1><p>Student and administrator accounts.</p></div>
+      <div class="table-container">
+        <table>
+          <thead><tr><th>Full Name</th><th>Institutional ID</th><th>Email</th><th>Account Type</th></tr></thead>
+          <tbody id="usersTable"></tbody>
+        </table>
+      </div>
+      <p id="usersMessage" class="feedback"></p>
+    </section>
 
-            <ul class="sidebar-menu">
-                <li>
-                    <button class="active"
-                            onclick="showUserPage('dashboardPage', this)">
-                        <i class="fa-solid fa-laptop"></i>
-                        <span>Dashboard</span>
-                    </button>
-                </li>
+    <!-- LOGS -->
+    <section id="borrowingLogs" class="page">
+      <div class="page-title"><h1>Borrowing Logs</h1><p>History of requests, approvals, rejections, and returns.</p></div>
+      <div class="table-container">
+        <table>
+          <thead><tr><th>Student</th><th>Institutional ID</th><th>Laptop</th><th>Request Date</th><th>Return Date</th><th>Status</th></tr></thead>
+          <tbody id="logsTable"></tbody>
+        </table>
+      </div>
+      <p id="logsMessage" class="feedback"></p>
+    </section>
+  </main>
+</div>
 
-                <li>
-                    <button onclick="showUserPage('historyPage', this)">
-                        <i class="fa-solid fa-clock-rotate-left"></i>
-                        <span>Borrowing History</span>
-                    </button>
-                </li>
-
-                <li>
-                    <button onclick="showUserPage('profilePage', this)">
-                        <i class="fa-solid fa-user"></i>
-                        <span>Profile</span>
-                    </button>
-                </li>
-
-                <li class="sidebar-logout">
-                    <button class="logout-btn" onclick="logout()">
-                        <i class="fa-solid fa-right-from-bracket"></i>
-                        <span>Logout</span>
-                    </button>
-                </li>
-            </ul>
-        </div>
-
-        <!-- STUDENT MAIN CONTENT -->
-        <div class="main-content">
-            <header class="top-header">
-                <div>
-                    <h1>Laptop Borrowing System</h1>
-                    <p>Computerized Laptop Borrowing and Management</p>
-                </div>
-
-                <div class="header-user">
-                    <i class="fa-solid fa-circle-user"></i>
-                    <span id="headerUserName">User</span>
-                </div>
-            </header>
-
-            <!-- STUDENT DASHBOARD -->
-            <div id="dashboardPage" class="page active">
-                <div class="page-title">
-                    <h1>Dashboard</h1>
-                    <p>Manage your laptop borrowing activity.</p>
-                </div>
-
-                <div class="welcome-box">
-                    <h2>Welcome, <span id="welcomeName"></span>!</h2>
-                    <p>
-                        You can borrow available laptops and view your
-                        borrowing history here.
-                    </p>
-                </div>
-
-                <h2 style="color:#172b3a; font-size:17px; margin-bottom:15px;">
-                    Available Laptops
-                </h2>
-
-                <div class="laptop-grid" id="dashboardLaptopGrid"></div>
-            </div>
-
-            <!-- STUDENT BORROWING HISTORY -->
-            <div id="historyPage" class="page">
-                <div class="page-title">
-                    <h1>My Borrowing History</h1>
-                    <p>View your laptop borrowing records.</p>
-                </div>
-
-                <div class="table-container">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Laptop</th>
-                                <th>Borrow Date</th>
-                                <th>Borrow Time</th>
-                                <th>Return Date</th>
-                                <th>Return Time</th>
-                                <th>Status</th>
-                                <th>Action</th>
-                            </tr>
-                        </thead>
-                        <tbody id="historyTable"></tbody>
-                    </table>
-                </div>
-            </div>
-
-            <!-- STUDENT PROFILE -->
-            <div id="profilePage" class="page">
-                <div class="page-title">
-                    <h1>My Profile</h1>
-                    <p>Your registered account information.</p>
-                </div>
-
-                <div class="welcome-box">
-                    <h3>Full Name</h3>
-                    <p id="profileName"></p>
-
-                    <br>
-
-                    <h3>Student ID</h3>
-                    <p id="profileStudentID"></p>
-
-                    <br>
-
-                    <h3>Email</h3>
-                    <p id="profileUsername"></p>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- ADMIN SYSTEM -->
-    <div id="adminSystem" style="display:none;">
-
-        <!-- ADMIN SIDEBAR -->
-        <div class="sidebar">
-            <div class="sidebar-logo">
-                <i class="fa-solid fa-laptop"></i>
-                <h2>Admin Panel</h2>
-            </div>
-
-            <ul class="sidebar-menu">
-                <li>
-                    <button class="active"
-                            onclick="showAdminPage('adminDashboard', this)">
-                        <i class="fa-solid fa-house"></i>
-                        <span>Dashboard</span>
-                    </button>
-                </li>
-
-                <li>
-                    <button onclick="showAdminPage('manageLaptopsPage', this)">
-                        <i class="fa-solid fa-laptop"></i>
-                        <span>Manage Laptops</span>
-                    </button>
-                </li>
-
-                <li>
-                    <button onclick="showAdminPage('usersPage', this)">
-                        <i class="fa-solid fa-users"></i>
-                        <span>Registered Users</span>
-                    </button>
-                </li>
-
-                <li class="sidebar-logout">
-                    <button class="logout-btn" onclick="logout()">
-                        <i class="fa-solid fa-right-from-bracket"></i>
-                        <span>Logout</span>
-                    </button>
-                </li>
-            </ul>
-        </div>
-
-        <!-- ADMIN MAIN CONTENT -->
-        <div class="main-content">
-            <header class="top-header">
-                <div>
-                    <h1>Laptop Borrowing System</h1>
-                    <p>Administrator Dashboard</p>
-                </div>
-
-                <div class="header-user">
-                    <i class="fa-solid fa-circle-user"></i>
-                    <span>Administrator</span>
-                </div>
-            </header>
-
-            <!-- ADMIN DASHBOARD -->
-            <div id="adminDashboard" class="page active">
-                <div class="page-title">
-                    <h1>Dashboard</h1>
-                    <p>Manage laptops and registered users.</p>
-                </div>
-
-                <div class="stats-grid">
-                    <div class="stat-card">
-                        <div class="stat-icon">
-                            <i class="fa-solid fa-laptop"></i>
-                        </div>
-                        <h3>Total Laptops</h3>
-                        <p id="totalLaptops">0</p>
-                    </div>
-
-                    <div class="stat-card">
-                        <div class="stat-icon">
-                            <i class="fa-solid fa-circle-check"></i>
-                        </div>
-                        <h3>Available</h3>
-                        <p id="availableLaptops">0</p>
-                    </div>
-
-                    <div class="stat-card">
-                        <div class="stat-icon">
-                            <i class="fa-solid fa-clock"></i>
-                        </div>
-                        <h3>Borrowed</h3>
-                        <p id="borrowedLaptops">0</p>
-                    </div>
-
-                    <div class="stat-card">
-                        <div class="stat-icon">
-                            <i class="fa-solid fa-users"></i>
-                        </div>
-                        <h3>Registered Users</h3>
-                        <p id="totalUsers">0</p>
-                    </div>
-                </div>
-
-                <div class="dashboard-grid">
-                    <div class="dashboard-box">
-                        <h2>System Overview</h2>
-                        <p style="color:#777; font-size:13px; line-height:1.7;">
-                            Use the sidebar to manage laptops and view
-                            registered users. Laptop statistics update
-                            when laptops are borrowed or returned.
-                        </p>
-                    </div>
-                </div>
-            </div>
-
-            <!-- MANAGE LAPTOPS -->
-            <div id="manageLaptopsPage" class="page">
-                <div class="page-title">
-                    <h1>Manage Laptops</h1>
-                    <p>Add or remove laptops from the system.</p>
-                </div>
-
-                <div class="admin-form">
-                    <h2>Add Laptop</h2>
-
-                    <div class="admin-form-row">
-                        <input type="text"
-                               id="newLaptopNumber"
-                               placeholder="Example: LAP-005">
-
-                        <button onclick="addLaptop()">
-                            <i class="fa-solid fa-plus"></i>
-                            Add Laptop
-                        </button>
-                    </div>
-                </div>
-
-                <div class="table-container">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Laptop Number</th>
-                                <th>Status</th>
-                                <th>Action</th>
-                            </tr>
-                        </thead>
-                        <tbody id="adminLaptopTable"></tbody>
-                    </table>
-                </div>
-            </div>
-
-            <!-- REGISTERED USERS -->
-            <div id="usersPage" class="page">
-                <div class="page-title">
-                    <h1>Registered Users</h1>
-                    <p>View users registered in the system.</p>
-                </div>
-
-                <div class="table-container">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Full Name</th>
-                                <th>Student ID</th>
-                                <th>Email</th>
-                            </tr>
-                        </thead>
-                        <tbody id="registeredUsersTable"></tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- JAVASCRIPT -->
-    <script src="script.js"></script>
+<script src="script.js"></script>
 </body>
 </html>
