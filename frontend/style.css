@@ -500,6 +500,7 @@ a:hover {
     padding: 10px 18px;
 }
 
+
 /* =========================================
    LAPTOP CARDS
 ========================================= */
@@ -508,10 +509,16 @@ a:hover {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 20px;
+    width: 100%;
+    min-width: 0;
+    align-items: stretch;
 }
 
 .laptop-card {
+    display: flex;
+    flex-direction: column;
     min-width: 0;
+    width: 100%;
     overflow: hidden;
     border: 1px solid var(--border);
     border-radius: 11px;
@@ -525,8 +532,19 @@ a:hover {
     box-shadow: 0 9px 22px rgba(15, 23, 42, 0.08);
 }
 
-.laptop-image {
-    height: 165px;
+/* Works for either an image element or an image container */
+.laptop-card img.laptop-image {
+    display: block;
+    width: 100%;
+    height: 190px;
+    flex-shrink: 0;
+    object-fit: cover;
+}
+
+.laptop-card .laptop-image {
+    width: 100%;
+    height: 190px;
+    flex-shrink: 0;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -535,17 +553,16 @@ a:hover {
     font-size: 53px;
 }
 
-.laptop-card .laptop-image {
-    background: #e2e8f0;
-    object-fit: cover;
-}
-
 .laptop-card-body {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
     padding: 17px;
 }
 
 .laptop-card h3 {
-    margin-bottom: 6px;
+    margin-bottom: 8px;
     font-size: 16px;
     color: #0f172a;
     overflow-wrap: anywhere;
@@ -559,16 +576,22 @@ a:hover {
 }
 
 .laptop-card .status {
+    align-self: flex-start;
     margin-top: 2px;
 }
 
 .laptop-card .primary-btn {
-    margin-top: 13px;
+    display: block;
+    width: 100%;
+    margin-top: auto;
+    padding: 12px;
 }
 
 .laptop-card button {
     width: 100%;
+    box-sizing: border-box;
 }
+
 
 /* =========================================
    STATUS BADGES
@@ -961,5 +984,72 @@ a:hover {
 
     .auth-container h1 {
         font-size: 22px;
+    }
+}
+
+/* EDIT LAPTOP FEATURE */
+
+#editLaptopPanel {
+    margin-top: 22px;
+    border: 1px solid #bfdbfe;
+    border-radius: 10px;
+    background: #ffffff;
+    animation: pageFade 0.2s ease-in-out;
+}
+
+#editLaptopPanel h2 {
+    color: #1e3a8a;
+    margin-bottom: 18px;
+}
+
+#editLaptopForm .form-group {
+    margin-bottom: 17px;
+}
+
+#editLaptopForm label {
+    display: block;
+    margin-bottom: 7px;
+    color: #334155;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.edit-form-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 15px;
+}
+
+.edit-form-actions .primary-btn {
+    width: auto;
+    margin-top: 0;
+}
+
+.edit-btn {
+    margin: 2px;
+    padding: 7px 10px;
+    border: none;
+    border-radius: 5px;
+    background: #2563eb;
+    color: #ffffff;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.edit-btn:hover {
+    background: #1d4ed8;
+}
+
+@media (max-width: 500px) {
+    .edit-form-actions {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .edit-form-actions button {
+        width: 100%;
     }
 }

@@ -1,4 +1,3 @@
-
 const API_BASE_URL = "http://localhost:3000";
 
 let currentUser = null;
@@ -36,6 +35,7 @@ async function api(path, options = {}) {
 function setMessage(id, text, type = "") {
   const element = $(id);
   if (!element) return;
+
   element.textContent = text || "";
   element.className = `feedback ${type}`.trim();
 }
@@ -52,6 +52,7 @@ function escapeHTML(value) {
 
 function formatDate(value) {
   if (!value) return "—";
+
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString();
 }
@@ -70,6 +71,7 @@ function authPage(page) {
 function logout() {
   currentUser = null;
   sessionStorage.removeItem("cpeBorrowingUser");
+
   authPage("login");
   $("loginForm").reset();
   setMessage("loginMessage", "");
@@ -101,8 +103,8 @@ function showPage(pageId) {
     page.classList.toggle("active", page.id === pageId);
   });
 
-  document.querySelectorAll(".sidebar-menu button[data-page]").forEach(btn => {
-    btn.classList.toggle("active", btn.dataset.page === pageId);
+  document.querySelectorAll(".sidebar-menu button[data-page]").forEach(button => {
+    button.classList.toggle("active", button.dataset.page === pageId);
   });
 
   const page = $(pageId);
@@ -135,6 +137,7 @@ async function login(event) {
     });
 
     currentUser = result.user;
+
     sessionStorage.setItem("cpeBorrowingUser", JSON.stringify(currentUser));
     setMessage("loginMessage", "");
     enterApp();
@@ -152,11 +155,13 @@ async function register(event) {
   const password = $("registerPassword").value;
 
   if (password !== $("confirmPassword").value) {
-    return setMessage("registerMessage", "Passwords do not match.", "error");
+    setMessage("registerMessage", "Passwords do not match.", "error");
+    return;
   }
 
   if (password.length < 8) {
-    return setMessage("registerMessage", "Password must be at least 8 characters.", "error");
+    setMessage("registerMessage", "Password must be at least 8 characters.", "error");
+    return;
   }
 
   setMessage("registerMessage", "Creating account...");
@@ -170,7 +175,7 @@ async function register(event) {
     $("registerForm").reset();
     setMessage(
       "registerMessage",
-      result.message || "Account created. You can now log in.",
+      result.message || "Registration successful. You can now log in.",
       "success"
     );
   } catch (error) {
@@ -220,6 +225,7 @@ function renderLaptops() {
     status.innerHTML = badge(laptop.status);
 
     const button = document.createElement("button");
+    button.className = "primary-btn";
     button.textContent = laptop.status === "available"
       ? "Request Laptop"
       : laptop.status === "pending"
@@ -268,6 +274,7 @@ async function loadHistory() {
 
     history.forEach(record => {
       const tr = document.createElement("tr");
+
       tr.innerHTML = `
         <td>${escapeHTML(record.laptopCode)}</td>
         <td>${escapeHTML(record.laptopName)}</td>
@@ -298,6 +305,7 @@ async function loadHistory() {
 
 async function returnLaptop(laptopId, button) {
   if (!confirm("Confirm that you are returning this laptop?")) return;
+
   button.disabled = true;
 
   try {
@@ -326,9 +334,9 @@ async function loadAdminDashboard() {
 
     $("statTotal").textContent = laptops.length;
     $("statAvailable").textContent =
-      laptops.filter(l => l.status === "available").length;
+      laptops.filter(laptop => laptop.status === "available").length;
     $("statBorrowed").textContent =
-      laptops.filter(l => l.status === "borrowed").length;
+      laptops.filter(laptop => laptop.status === "borrowed").length;
 
     const requests = await api(adminQuery("/api/admin/requests"));
     $("statPending").textContent = (requests.requests || []).length;
@@ -350,6 +358,7 @@ async function loadRequests() {
 
     requests.forEach(request => {
       const tr = document.createElement("tr");
+
       tr.innerHTML = `
         <td>${escapeHTML(request.studentName)}</td>
         <td>${escapeHTML(request.institutionalId)}</td>
@@ -415,6 +424,7 @@ async function loadInventory() {
 
     laptops.forEach(laptop => {
       const tr = document.createElement("tr");
+
       tr.innerHTML = `
         <td>${escapeHTML(laptop.laptop_code || laptop.code)}</td>
         <td>${escapeHTML(laptop.laptop_name || laptop.name)}</td>
@@ -422,18 +432,82 @@ async function loadInventory() {
         <td></td>
       `;
 
-      const button = document.createElement("button");
-      button.className = "delete-btn";
-      button.textContent = "Remove";
-      button.disabled = laptop.status === "borrowed";
-      button.addEventListener("click", () => removeLaptop(laptop.id));
-      tr.lastElementChild.append(button);
+      const editButton = document.createElement("button");
+      editButton.className = "edit-btn";
+      editButton.type = "button";
+      editButton.innerHTML = '<i class="fas fa-pen"></i> Edit';
+      editButton.addEventListener("click", () => openEditLaptop(laptop));
+
+      const removeButton = document.createElement("button");
+      removeButton.className = "delete-btn";
+      removeButton.type = "button";
+      removeButton.textContent = "Remove";
+      removeButton.disabled = laptop.status === "borrowed";
+      removeButton.addEventListener("click", () => removeLaptop(laptop.id));
+
+      tr.lastElementChild.append(editButton, removeButton);
       tbody.append(tr);
     });
-
-    await loadAdminDashboard();
   } catch (error) {
     setMessage("inventoryMessage", error.message, "error");
+  }
+}
+
+function openEditLaptop(laptop) {
+  $("editLaptopId").value = laptop.id;
+  $("editLaptopName").value = laptop.laptop_name || laptop.name || "";
+  $("editLaptopCode").value = laptop.laptop_code || laptop.code || "";
+
+  setMessage("editLaptopMessage", "");
+  $("editLaptopPanel").classList.remove("hidden");
+  $("editLaptopPanel").scrollIntoView({ behavior: "smooth", block: "start" });
+  $("editLaptopName").focus();
+}
+
+function cancelEditLaptop() {
+  $("editLaptopForm").reset();
+  $("editLaptopPanel").classList.add("hidden");
+  setMessage("editLaptopMessage", "");
+}
+
+async function saveLaptopChanges(event) {
+  event.preventDefault();
+
+  const laptopId = $("editLaptopId").value;
+  const laptopName = $("editLaptopName").value.trim();
+  const laptopCode = $("editLaptopCode").value.trim();
+
+  if (!laptopName || !laptopCode) {
+    setMessage("editLaptopMessage", "Laptop name and code are required.", "error");
+    return;
+  }
+
+  const saveButton = $("saveLaptopChanges");
+  saveButton.disabled = true;
+  setMessage("editLaptopMessage", "Saving changes...");
+
+  try {
+    const result = await api(
+      `/api/admin/laptops/${encodeURIComponent(laptopId)}`,
+      {
+        method: "PATCH",
+        body: { userId: currentUser.id, laptopName, laptopCode }
+      }
+    );
+
+    setMessage(
+      "inventoryMessage",
+      result.message || "Laptop updated successfully.",
+      "success"
+    );
+
+    cancelEditLaptop();
+    await loadInventory();
+    await loadStudentLaptops();
+  } catch (error) {
+    setMessage("editLaptopMessage", error.message, "error");
+  } finally {
+    saveButton.disabled = false;
   }
 }
 
@@ -490,6 +564,7 @@ async function loadUsers() {
 
     users.forEach(user => {
       const tr = document.createElement("tr");
+
       [
         user.fullName,
         user.institutionalId,
@@ -500,6 +575,7 @@ async function loadUsers() {
         td.textContent = value || "—";
         tr.append(td);
       });
+
       tbody.append(tr);
     });
   } catch (error) {
@@ -520,6 +596,7 @@ async function loadLogs() {
 
     logs.forEach(record => {
       const tr = document.createElement("tr");
+
       [
         record.student?.name,
         record.student?.institutionalId,
@@ -558,7 +635,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
   $("studentLogout").addEventListener("click", logout);
   $("adminLogout").addEventListener("click", logout);
+
   $("addLaptopForm").addEventListener("submit", addLaptop);
+  $("editLaptopForm").addEventListener("submit", saveLaptopChanges);
+  $("cancelEditLaptop").addEventListener("click", cancelEditLaptop);
+
   $("laptopSearch").addEventListener("input", renderLaptops);
   $("refreshRequests").addEventListener("click", loadRequests);
 

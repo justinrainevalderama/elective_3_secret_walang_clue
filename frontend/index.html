@@ -168,24 +168,65 @@
     </section>
 
     <!-- ADMIN INVENTORY -->
-    <section id="manageLaptops" class="page">
-      <div class="page-title"><h1>Manage Laptops</h1><p>Add and manage laptops in the inventory.</p></div>
-      <div class="admin-form">
-        <h2>Add New Laptop</h2>
-        <form id="addLaptopForm" class="admin-form-row">
-          <input id="newLaptopName" placeholder="Laptop name/model" required>
-          <input id="newLaptopCode" placeholder="Laptop code" required>
-          <button type="submit"><i class="fas fa-plus"></i> Add Laptop</button>
-        </form>
-        <p id="inventoryMessage" class="feedback"></p>
+<section id="manageLaptops" class="page">
+  <div class="page-title">
+    <h1>Manage Laptops</h1>
+    <p>Add and manage laptops in the inventory.</p>
+  </div>
+
+  <div class="admin-form">
+    <h2>Add New Laptop</h2>
+    <form id="addLaptopForm" class="admin-form-row">
+      <input id="newLaptopName" placeholder="Laptop name/model" maxlength="100" required>
+      <input id="newLaptopCode" placeholder="Laptop code" maxlength="50" required>
+      <button type="submit"><i class="fas fa-plus"></i> Add Laptop</button>
+    </form>
+    <p id="inventoryMessage" class="feedback"></p>
+  </div>
+
+  <div class="table-container">
+    <table>
+      <thead>
+        <tr>
+          <th>Laptop Code</th>
+          <th>Laptop Name</th>
+          <th>Status</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody id="inventoryTable"></tbody>
+    </table>
+  </div>
+
+  <!-- EDIT LAPTOP FORM -->
+  <div id="editLaptopPanel" class="admin-form hidden">
+    <h2>Edit Laptop Information</h2>
+    <form id="editLaptopForm">
+      <input type="hidden" id="editLaptopId">
+
+      <div class="form-group">
+        <label for="editLaptopName">Laptop Name/Model</label>
+        <input id="editLaptopName" maxlength="100" required>
       </div>
-      <div class="table-container">
-        <table>
-          <thead><tr><th>Laptop Code</th><th>Laptop Name</th><th>Status</th><th>Action</th></tr></thead>
-          <tbody id="inventoryTable"></tbody>
-        </table>
+
+      <div class="form-group">
+        <label for="editLaptopCode">Laptop Code</label>
+        <input id="editLaptopCode" maxlength="50" required>
       </div>
-    </section>
+
+      <p id="editLaptopMessage" class="feedback"></p>
+
+      <div class="edit-form-actions">
+        <button id="saveLaptopChanges" type="submit" class="primary-btn compact-btn">
+          <i class="fas fa-save"></i> Save Changes
+        </button>
+        <button id="cancelEditLaptop" type="button" class="secondary-btn">
+          Cancel
+        </button>
+      </div>
+    </form>
+  </div>
+</section>
 
     <!-- USERS -->
     <section id="registeredUsers" class="page">
