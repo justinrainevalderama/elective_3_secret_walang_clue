@@ -413,6 +413,81 @@ app.post("/api/admin/laptops", async (req, res) => {
   }
 });
 
+// ADMIN: EDIT LAPTOP NAME AND CODE
+app.patch("/api/admin/laptops/:id", async (req, res) => {
+  try {
+    const { userId, laptopName, laptopCode } = req.body;
+
+    // Verify admin access
+    if (!await requireAdmin(userId, res)) return;
+
+    // Validate input
+    if (!req.params.id || !laptopName?.trim() || !laptopCode?.trim()) {
+      return fail(
+        res,
+        400,
+        "Laptop ID, laptop name, and laptop code are required."
+      );
+    }
+
+    const cleanName = laptopName.trim();
+    const cleanCode = laptopCode.trim();
+
+    if (cleanName.length > 100) {
+      return fail(res, 400, "Laptop name must not exceed 100 characters.");
+    }
+
+    if (cleanCode.length > 50) {
+      return fail(res, 400, "Laptop code must not exceed 50 characters.");
+    }
+
+    // Check whether the laptop exists
+    const { data: existingLaptop, error: findError } = await supabase
+      .from("laptops")
+      .select("id")
+      .eq("id", req.params.id)
+      .maybeSingle();
+
+    if (findError) throw findError;
+
+    if (!existingLaptop) {
+      return fail(res, 404, "Laptop not found.");
+    }
+
+    // Update laptop name and code
+    const { data: updatedLaptop, error: updateError } = await supabase
+      .from("laptops")
+      .update({
+        laptop_name: cleanName,
+        laptop_code: cleanCode
+      })
+      .eq("id", req.params.id)
+      .select("id, laptop_name, laptop_code, status")
+      .single();
+
+    if (updateError) {
+      if (updateError.code === "23505") {
+        return fail(
+          res,
+          409,
+          "That laptop code is already being used by another laptop."
+        );
+      }
+
+      throw updateError;
+    }
+
+    return res.json({
+      success: true,
+      message: "Laptop information updated successfully.",
+      laptop: updatedLaptop
+    });
+  } catch (error) {
+    console.error("Edit laptop error:", error);
+    return fail(res, 500, "Unable to update laptop information.");
+  }
+});
+
 // ADMIN: REMOVE LAPTOP
 app.delete("/api/admin/laptops/:id", async (req, res) => {
   try {
