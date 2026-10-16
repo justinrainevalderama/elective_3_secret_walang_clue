@@ -671,4 +671,5 @@ document.addEventListener("DOMContentLoaded", () => {
   } else {
     authPage("login");
   }
+  
 });
