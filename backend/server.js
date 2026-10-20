@@ -131,6 +131,7 @@ app.post("/api/register", async (req, res) => {
   }
 });
 
+
 // LOGIN
 app.post("/api/login", async (req, res) => {
   try {
@@ -140,13 +141,25 @@ app.post("/api/login", async (req, res) => {
       return fail(res, 400, "Email and password are required.");
     }
 
+    const normalizedEmail = email.trim().toLowerCase();
+
     const { data, error } = await supabase.auth.signInWithPassword({
-      email: email.trim().toLowerCase(),
+      email: normalizedEmail,
       password
     });
 
-    if (error || !data.user) {
-      return fail(res, 401, "Invalid email or password.");
+    if (error) {
+      console.error("Supabase login error:", {
+        message: error.message,
+        code: error.code,
+        status: error.status
+      });
+
+      return fail(res, 401, "Authentication failed. Check server logs.");
+    }
+
+    if (!data?.user) {
+      return fail(res, 401, "Authentication failed.");
     }
 
     const profile = await getProfile(data.user.id);
@@ -170,11 +183,13 @@ app.post("/api/login", async (req, res) => {
       },
       session: data.session
     });
+
   } catch (error) {
     console.error("Login error:", error);
     return fail(res, 500, "Login failed.");
   }
 });
+
 
 
 /* STUDENT: UPDATE OWN PROFILE */
