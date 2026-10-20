@@ -176,6 +176,87 @@ app.post("/api/login", async (req, res) => {
   }
 });
 
+
+/* STUDENT: UPDATE OWN PROFILE */
+app.patch("/api/profile/:userId", async (req, res) => {
+  try {
+    const userId = req.params.userId;
+    const { fullName, institutionalId } = req.body;
+
+    if (!fullName?.trim() || !institutionalId?.trim()) {
+      return fail(res, 400, "Full name and institutional ID are required.");
+    }
+
+    const name = fullName.trim();
+    const studentId = institutionalId.trim();
+
+    if (name.length > 100 || studentId.length > 50) {
+      return fail(res, 400, "Full name or institutional ID is too long.");
+    }
+
+    const profile = await getProfile(userId);
+
+    if (!profile) {
+      return fail(res, 404, "Profile not found.");
+    }
+
+    if (profile.account_type !== "student") {
+      return fail(res, 403, "Only student profiles can be edited here.");
+    }
+
+    // Check whether another profile already uses this institutional ID.
+    const { data: duplicate, error: duplicateError } = await supabase
+      .from("profiles")
+      .select("id")
+      .eq("institutional_id", studentId)
+      .neq("id", userId)
+      .limit(1)
+      .maybeSingle();
+
+    if (duplicateError) throw duplicateError;
+
+    if (duplicate) {
+      return fail(res, 409, "That institutional ID is already registered.");
+    }
+
+    const { data: updated, error: updateError } = await supabase
+      .from("profiles")
+      .update({
+        full_name: name,
+        institutional_id: studentId
+      })
+      .eq("id", userId)
+      .eq("account_type", "student")
+      .select("id, full_name, institutional_id, account_type")
+      .maybeSingle();
+
+    if (updateError) {
+      if (updateError.code === "23505") {
+        return fail(res, 409, "That institutional ID is already registered.");
+      }
+      throw updateError;
+    }
+
+    if (!updated) {
+      return fail(res, 404, "Profile could not be updated.");
+    }
+
+    return res.json({
+      success: true,
+      message: "Profile updated successfully.",
+      profile: {
+        fullName: updated.full_name,
+        institutionalId: updated.institutional_id,
+        accountType: updated.account_type
+      }
+    });
+  } catch (error) {
+    console.error("Profile update error:", error);
+    return fail(res, 500, "Unable to update profile.");
+  }
+});
+
+
 // PUBLIC LAPTOP LIST
 app.get("/api/laptops", async (req, res) => {
   try {
@@ -257,6 +338,71 @@ app.post("/api/borrow", async (req, res) => {
     fail(res, 500, "Unable to submit the borrowing request.");
   }
 });
+
+
+/* STUDENT CANCELS A PENDING REQUEST */
+app.post("/api/cancel-request", async (req, res) => {
+  try {
+    const { userId, laptopId } = req.body;
+
+    if (!userId || !laptopId) {
+      return fail(res, 400, "User ID and laptop ID are required.");
+    }
+
+    // Verify that this is a registered student.
+    const profile = await getProfile(userId);
+
+    if (!profile || profile.account_type !== "student") {
+      return fail(res, 403, "Only students can cancel requests.");
+    }
+
+    // Find the student's pending request for this laptop.
+    const { data: request, error: requestError } = await supabase
+      .from("borrowings")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("laptop_id", laptopId)
+      .eq("status", "pending")
+      .order("borrowed_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (requestError) throw requestError;
+
+    if (!request) {
+      return fail(res, 404, "No pending request was found.");
+    }
+
+    // Cancel only if the request is still pending.
+    const { data: cancelled, error: cancelError } = await supabase
+      .from("borrowings")
+      .update({ status: "cancelled" })
+      .eq("id", request.id)
+      .eq("user_id", userId)
+      .eq("status", "pending")
+      .select("id")
+      .maybeSingle();
+
+    if (cancelError) throw cancelError;
+
+    if (!cancelled) {
+      return fail(
+        res,
+        409,
+        "The request has already been processed."
+      );
+    }
+
+    return res.json({
+      success: true,
+      message: "Request cancelled successfully."
+    });
+  } catch (error) {
+  console.error("Cancel request error:", error);
+return fail(res, 500, "Unable to cancel the request.");
+}
+});
+
 
 // STUDENT HISTORY
 app.get("/api/borrowings/:userId", async (req, res) => {
@@ -772,6 +918,123 @@ app.get("/api/admin/logs", async (req, res) => {
     fail(res, 500, "Unable to load borrowing logs.");
   }
 });
+
+
+/* ADMIN: RECENT ACTIVITY */
+app.get("/api/admin/activity", async (req, res) => {
+  try {
+    if (!await requireAdmin(req.query.userId, res)) return;
+
+    const { data: records, error } = await supabase
+      .from("borrowings")
+      .select("id, user_id, laptop_id, status, borrowed_at, returned_at")
+      .order("borrowed_at", { ascending: false })
+      .limit(50);
+
+    if (error) throw error;
+
+    const userIds = [...new Set((records || []).map(r => r.user_id))];
+    const laptopIds = [...new Set((records || []).map(r => r.laptop_id))];
+
+    let profileMap = new Map();
+    let laptopMap = new Map();
+
+    if (userIds.length) {
+      const result = await supabase
+        .from("profiles")
+        .select("id, full_name")
+        .in("id", userIds);
+
+      if (result.error) throw result.error;
+      profileMap = new Map(
+        (result.data || []).map(p => [p.id, p])
+      );
+    }
+
+    if (laptopIds.length) {
+      const result = await supabase
+        .from("laptops")
+        .select("id, laptop_name, laptop_code")
+        .in("id", laptopIds);
+
+      if (result.error) throw result.error;
+      laptopMap = new Map(
+        (result.data || []).map(l => [l.id, l])
+      );
+    }
+
+    const activities = [];
+
+    for (const record of records || []) {
+      const student = profileMap.get(record.user_id);
+      const laptop = laptopMap.get(record.laptop_id);
+
+      const base = {
+        studentName: student?.full_name || "Unknown student",
+        laptopCode: laptop?.laptop_code || "Laptop",
+        laptopName: laptop?.laptop_name || "Laptop removed"
+      };
+
+      if (record.status === "pending") {
+        activities.push({
+          ...base,
+          type: "request",
+          message: "requested to borrow",
+          timestamp: record.borrowed_at
+        });
+      }
+
+      if (record.status === "cancelled") {
+        activities.push({
+          ...base,
+          type: "cancel",
+          message: "cancelled a borrowing request for",
+          timestamp: record.borrowed_at
+        });
+      }
+
+      if (record.status === "borrowed") {
+        activities.push({
+          ...base,
+          type: "approval",
+          message: "had a borrowing request approved for",
+          timestamp: record.borrowed_at
+        });
+      }
+
+      if (record.status === "returned") {
+        activities.push({
+          ...base,
+          type: "return",
+          message: "returned",
+          timestamp: record.returned_at || record.borrowed_at
+        });
+      }
+
+      if (record.status === "rejected") {
+        activities.push({
+          ...base,
+          type: "cancel",
+          message: "had a borrowing request rejected for",
+          timestamp: record.borrowed_at
+        });
+      }
+    }
+
+    activities.sort(
+      (a, b) => new Date(b.timestamp) - new Date(a.timestamp)
+    );
+
+    res.json({
+      success: true,
+      activities: activities.slice(0, 10)
+    });
+  } catch (error) {
+    console.error("Recent activity error:", error);
+    fail(res, 500, "Unable to load recent activity.");
+  }
+});
+
 
 app.listen(PORT, () => {
   console.log(`Backend running at http://localhost:${PORT}`);

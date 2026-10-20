@@ -127,16 +127,81 @@
       <p id="historyMessage" class="feedback"></p>
     </section>
 
-    <!-- STUDENT PROFILE -->
-    <section id="studentProfile" class="page">
-      <div class="page-title"><h1>My Profile</h1><p>Your registered account information.</p></div>
-      <div class="welcome-box">
-        <p><strong>Full Name:</strong> <span id="profileName"></span></p>
-        <p><strong>Institutional ID:</strong> <span id="profileID"></span></p>
-        <p><strong>Email:</strong> <span id="profileEmail"></span></p>
-        <p><strong>Account Type:</strong> <span id="profileType"></span></p>
+    
+<!-- STUDENT PROFILE -->
+<section id="studentProfile" class="page">
+  <div class="page-title">
+    <h1>My Profile</h1>
+    <p>View and update your registered account information.</p>
+  </div>
+
+  <div class="welcome-box profile-box">
+    <div class="profile-heading">
+      <i class="fas fa-user-circle"></i>
+      <div>
+        <h2>Personal Information</h2>
+        <p>Keep your account details up to date.</p>
       </div>
-    </section>
+    </div>
+
+    <div id="profileView">
+      <p><strong>Full Name:</strong> <span id="profileName"></span></p>
+      <p><strong>Institutional ID:</strong> <span id="profileID"></span></p>
+      <p><strong>Email:</strong> <span id="profileEmail"></span></p>
+      <p><strong>Account Type:</strong> <span id="profileType"></span></p>
+
+      <button id="editProfileBtn" class="primary-btn compact-btn" type="button">
+        <i class="fas fa-pen"></i> Edit Profile
+      </button>
+    </div>
+
+    <form id="editProfileForm" class="hidden">
+      <div class="form-group">
+        <label for="editProfileName">Full Name</label>
+        <input
+          id="editProfileName"
+          type="text"
+          maxlength="100"
+          autocomplete="name"
+          required
+        >
+      </div>
+
+      <div class="form-group">
+        <label for="editProfileID">Institutional ID</label>
+        <input
+          id="editProfileID"
+          type="text"
+          maxlength="50"
+          required
+        >
+      </div>
+
+      <div class="form-group">
+        <label for="editProfileEmail">Email</label>
+        <input id="editProfileEmail" type="email" disabled>
+        <small>Email cannot be changed here.</small>
+      </div>
+
+      <div class="form-group">
+        <label for="editProfileType">Account Type</label>
+        <input id="editProfileType" type="text" disabled>
+      </div>
+
+      <div class="edit-form-actions">
+        <button class="primary-btn" type="submit">
+          <i class="fas fa-save"></i> Save Changes
+        </button>
+        <button id="cancelProfileEdit" class="secondary-btn" type="button">
+          Cancel
+        </button>
+      </div>
+    </form>
+
+    <p id="profileMessage" class="feedback" aria-live="polite"></p>
+  </div>
+</section>
+
 
     <!-- ADMIN DASHBOARD -->
     <section id="adminDashboard" class="page">
@@ -152,6 +217,24 @@
         <p>Review student requests and approve or reject them.</p><br>
         <button class="primary-btn compact-btn" data-goto="borrowRequests">Review Requests</button>
       </div>
+      
+      <!-- ADMIN RECENT ACTIVITY -->
+      <section class="dashboard-box recent-activity-card">
+        <div class="recent-activity-header">
+          <div>
+            <h2>Recent Activity</h2>
+            <p>Track the latest student borrowing activities.</p>
+          </div>
+          <span class="activity-live">
+            <i class="fas fa-circle"></i> Latest
+          </span>
+        </div>
+
+        <div id="recentActivityList" class="recent-activity-list" aria-live="polite">
+          <p class="activity-empty">Loading recent activity...</p>
+        </div>
+      </section>
+
     </section>
 
     <!-- ADMIN REQUESTS -->

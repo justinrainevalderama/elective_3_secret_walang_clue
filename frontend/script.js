@@ -2,6 +2,7 @@ const API_BASE_URL = "http://localhost:3000";
 
 let currentUser = null;
 let laptopList = [];
+let studentBorrowings = [];
 
 const $ = id => document.getElementById(id);
 
@@ -183,24 +184,36 @@ async function register(event) {
   }
 }
 
+
+
 async function loadStudentLaptops() {
   try {
-    const result = await api("/api/laptops");
-    laptopList = result.laptops || [];
+    const [laptopResult, borrowingResult] = await Promise.all([
+      api("/api/laptops"),
+      api(`/api/borrowings/${encodeURIComponent(currentUser.id)}`)
+    ]);
+
+    laptopList = laptopResult.laptops || [];
+    studentBorrowings = borrowingResult.history || [];
+
     renderLaptops();
   } catch (error) {
     setMessage("laptopMessage", error.message, "error");
   }
 }
 
+
+
+
+
 function renderLaptops() {
   const search = $("laptopSearch").value.trim().toLowerCase();
+  const grid = $("laptopGrid");
 
   const filtered = laptopList.filter(laptop =>
     `${laptop.code} ${laptop.name}`.toLowerCase().includes(search)
   );
 
-  const grid = $("laptopGrid");
   grid.replaceChildren();
 
   if (!filtered.length) {
@@ -214,48 +227,131 @@ function renderLaptops() {
 
     const image = document.createElement("img");
     image.className = "laptop-image";
-    image.src = "https://images.unsplash.com/photo-1496181133206-80ce9b88a853?auto=format&fit=crop&w=700&q=80";
+    image.src =
+      "https://images.unsplash.com/photo-1496181133206-80ce9b88a853?auto=format&fit=crop&w=700&q=80";
     image.alt = "Laptop";
     image.loading = "lazy";
 
     const title = document.createElement("h3");
     title.textContent = `${laptop.code} — ${laptop.name}`;
 
+    // Find this student's latest active request for this laptop.
+    const ownRecord = studentBorrowings.find(record =>
+      record.laptopId === laptop.id &&
+      ["pending", "borrowed"].includes(record.status)
+    );
+
     const status = document.createElement("p");
-    status.innerHTML = badge(laptop.status);
+    let buttonLabel = "";
+    let action = null;
+    let disabled = false;
+
+    if (ownRecord?.status === "pending") {
+      status.innerHTML = badge("pending");
+
+      buttonLabel = "Cancel Request";
+      action = button => cancelRequest(laptop.id, button);
+    } else if (ownRecord?.status === "borrowed") {
+      status.innerHTML = badge("borrowed");
+
+      buttonLabel = "Return Laptop";
+      action = button => returnLaptop(laptop.id, button);
+    } else if (laptop.status === "available") {
+      status.innerHTML = badge("available");
+
+      buttonLabel = "Request Laptop";
+      action = button => requestLaptop(laptop.id, button);
+    } else {
+      status.innerHTML = badge(laptop.status);
+      buttonLabel = "Unavailable";
+      disabled = true;
+    }
 
     const button = document.createElement("button");
-    button.className = "primary-btn";
-    button.textContent = laptop.status === "available"
-      ? "Request Laptop"
-      : laptop.status === "pending"
-        ? "Pending Approval"
-        : "Unavailable";
 
-    button.disabled = laptop.status !== "available";
-    button.addEventListener("click", () => requestLaptop(laptop.id, button));
+if (buttonLabel === "Request Laptop") {
+  button.className = "request-btn";
+} else if (buttonLabel === "Cancel Request") {
+  button.className = "reject-btn";
+} else if (buttonLabel === "Return Laptop") {
+  button.className = "return-btn";
+} else {
+  button.className = "primary-btn";
+}
+
+button.textContent = buttonLabel;
+button.disabled = disabled;
+
+    if (action) {
+      button.addEventListener("click", () => action(button));
+    }
 
     card.append(image, title, status, button);
     grid.append(card);
   });
 }
 
+
+
 async function requestLaptop(laptopId, button) {
+  if (button.disabled) return;
+
   button.disabled = true;
+  button.textContent = "Submitting...";
 
   try {
     const result = await api("/api/borrow", {
       method: "POST",
-      body: { userId: currentUser.id, laptopId }
+      body: {
+        userId: currentUser.id,
+        laptopId
+      }
+    });
+
+    setMessage(
+      "laptopMessage",
+      result.message || "Laptop request submitted successfully.",
+      "success"
+    );
+
+    // Refresh laptop inventory and this student's requests
+    await loadStudentLaptops();
+  } catch (error) {
+    setMessage("laptopMessage", error.message, "error");
+
+    // Restore the button if the request failed
+    button.disabled = false;
+    button.textContent = "Request Laptop";
+  }
+}
+
+
+async function cancelRequest(laptopId, button) {
+  if (!confirm("Are you sure you want to cancel this request?")) {
+    return;
+  }
+
+  button.disabled = true;
+
+  try {
+    const result = await api("/api/cancel-request", {
+      method: "POST",
+      body: {
+        userId: currentUser.id,
+        laptopId
+      }
     });
 
     setMessage("laptopMessage", result.message, "success");
+
     await loadStudentLaptops();
+    await loadHistory();
   } catch (error) {
     setMessage("laptopMessage", error.message, "error");
     button.disabled = false;
   }
 }
+
 
 async function loadHistory() {
   try {
@@ -286,15 +382,31 @@ async function loadHistory() {
 
       const action = tr.lastElementChild;
 
-      if (record.status === "borrowed") {
-        const button = document.createElement("button");
-        button.className = "return-btn";
-        button.textContent = "Return";
-        button.addEventListener("click", () => returnLaptop(record.laptopId, button));
-        action.append(button);
-      } else {
-        action.textContent = "—";
-      }
+      
+if (record.status === "pending") {
+  const button = document.createElement("button");
+  button.className = "reject-btn";
+  button.textContent = "Cancel Request";
+
+  button.addEventListener("click", async () => {
+    await cancelRequest(record.laptopId, button);
+  });
+
+  action.append(button);
+} else if (record.status === "borrowed") {
+  const button = document.createElement("button");
+  button.className = "return-btn";
+  button.textContent = "Return Laptop";
+
+  button.addEventListener("click", async () => {
+    await returnLaptop(record.laptopId, button);
+  });
+
+  action.append(button);
+} else {
+  action.textContent = "—";
+}
+
 
       tbody.append(tr);
     });
@@ -315,7 +427,9 @@ async function returnLaptop(laptopId, button) {
     });
 
     setMessage("historyMessage", result.message, "success");
-    await loadHistory();
+
+await loadStudentLaptops();
+await loadHistory();
   } catch (error) {
     setMessage("historyMessage", error.message, "error");
     button.disabled = false;
@@ -340,10 +454,88 @@ async function loadAdminDashboard() {
 
     const requests = await api(adminQuery("/api/admin/requests"));
     $("statPending").textContent = (requests.requests || []).length;
+    await loadRecentActivity();
   } catch (error) {
     console.error("Dashboard:", error.message);
   }
 }
+
+
+async function loadRecentActivity() {
+  const container = $("recentActivityList");
+
+  if (!container) return;
+
+  try {
+    const result = await api(adminQuery("/api/admin/activity"));
+    const activities = result.activities || [];
+
+    container.replaceChildren();
+
+    if (!activities.length) {
+      const empty = document.createElement("p");
+      empty.className = "activity-empty";
+      empty.textContent = "No recent borrowing activity yet.";
+      container.append(empty);
+      return;
+    }
+
+    const icons = {
+      request: "fa-laptop",
+      cancel: "fa-times-circle",
+      return: "fa-check-circle",
+      approval: "fa-clipboard-check"
+    };
+
+    activities.forEach(activity => {
+      const item = document.createElement("div");
+      item.className = "activity-item";
+
+      const icon = document.createElement("div");
+      icon.className = `activity-icon ${activity.type}`;
+
+      const iconElement = document.createElement("i");
+      iconElement.className = `fas ${icons[activity.type] || "fa-history"}`;
+      icon.append(iconElement);
+
+      const details = document.createElement("div");
+      details.className = "activity-details";
+
+      const description = document.createElement("p");
+      const student = document.createElement("strong");
+      student.textContent = activity.studentName;
+
+      description.append(
+        student,
+        document.createTextNode(
+          ` ${activity.message} ${activity.laptopCode} — ${activity.laptopName}.`
+        )
+      );
+
+      const meta = document.createElement("div");
+      meta.className = "activity-meta";
+
+      const date = new Date(activity.timestamp);
+      meta.textContent = Number.isNaN(date.getTime())
+        ? "Date unavailable"
+        : date.toLocaleString();
+
+      details.append(description, meta);
+      item.append(icon, details);
+      container.append(item);
+    });
+  } catch (error) {
+    console.error("Recent activity:", error.message);
+
+    container.replaceChildren();
+
+    const message = document.createElement("p");
+    message.className = "activity-empty";
+    message.textContent = "Unable to load recent activity.";
+    container.append(message);
+  }
+}
+
 
 async function loadRequests() {
   try {
@@ -373,25 +565,36 @@ async function loadRequests() {
       const accept = document.createElement("button");
       accept.className = "approve-btn";
       accept.textContent = "Accept";
-      accept.addEventListener("click", () => decideRequest(request.id, "accept"));
+      accept.addEventListener("click", () => {
+  decideRequest(request.id, "accept", accept, reject);});
 
       const reject = document.createElement("button");
       reject.className = "reject-btn";
       reject.textContent = "Reject";
-      reject.addEventListener("click", () => decideRequest(request.id, "reject"));
+      reject.addEventListener("click", () => {
+  decideRequest(request.id, "reject", accept, reject);});
 
       action.append(accept, reject);
       tbody.append(tr);
     });
 
-    await loadAdminDashboard();
   } catch (error) {
     setMessage("requestsMessage", error.message, "error");
   }
 }
 
-async function decideRequest(requestId, decision) {
-  if (!confirm(`Are you sure you want to ${decision} this request?`)) return;
+async function decideRequest(
+  requestId,
+  decision,
+  acceptButton,
+  rejectButton
+) {
+  if (!confirm(`Are you sure you want to ${decision} this request?`)) {
+    return;
+  }
+
+  if (acceptButton) acceptButton.disabled = true;
+  if (rejectButton) rejectButton.disabled = true;
 
   try {
     const result = await api(
@@ -403,11 +606,18 @@ async function decideRequest(requestId, decision) {
     );
 
     setMessage("requestsMessage", result.message, "success");
-    await loadRequests();
-    await loadInventory();
-    await loadLogs();
+
+    await Promise.all([
+      loadRequests(),
+      loadInventory(),
+      loadLogs(),
+      loadAdminDashboard()
+    ]);
   } catch (error) {
     setMessage("requestsMessage", error.message, "error");
+  } finally {
+    if (acceptButton) acceptButton.disabled = false;
+    if (rejectButton) rejectButton.disabled = false;
   }
 }
 
@@ -619,10 +829,93 @@ async function loadLogs() {
   }
 }
 
+
+function openProfileEditor() {
+  $("editProfileName").value = currentUser.fullName || "";
+  $("editProfileID").value = currentUser.institutionalId || "";
+  $("editProfileEmail").value = currentUser.email || "";
+  $("editProfileType").value = currentUser.accountType || "";
+
+  $("profileView").classList.add("hidden");
+  $("editProfileForm").classList.remove("hidden");
+  setMessage("profileMessage", "");
+}
+
+function closeProfileEditor() {
+  $("editProfileForm").classList.add("hidden");
+  $("profileView").classList.remove("hidden");
+  setMessage("profileMessage", "");
+}
+
+async function saveProfile(event) {
+  event.preventDefault();
+
+  const fullName = $("editProfileName").value.trim();
+  const institutionalId = $("editProfileID").value.trim();
+
+  if (!fullName || !institutionalId) {
+    setMessage(
+      "profileMessage",
+      "Full name and institutional ID are required.",
+      "error"
+    );
+    return;
+  }
+
+  const saveButton = $("editProfileForm").querySelector(
+    'button[type="submit"]'
+  );
+
+  saveButton.disabled = true;
+  setMessage("profileMessage", "Saving changes...");
+
+  try {
+    const result = await api(
+      `/api/profile/${encodeURIComponent(currentUser.id)}`,
+      {
+        method: "PATCH",
+        body: { fullName, institutionalId }
+      }
+    );
+
+    // Update the current session with the saved profile details.
+    currentUser.fullName = result.profile.fullName;
+    currentUser.institutionalId = result.profile.institutionalId;
+
+    sessionStorage.setItem(
+      "cpeBorrowingUser",
+      JSON.stringify(currentUser)
+    );
+
+    // Refresh displayed profile information.
+    $("profileName").textContent = currentUser.fullName;
+    $("profileID").textContent = currentUser.institutionalId;
+    $("profileEmail").textContent = currentUser.email || "";
+    $("profileType").textContent = currentUser.accountType || "";
+
+    $("headerUser").textContent =
+      currentUser.fullName || currentUser.email;
+
+    $("welcomeName").textContent = currentUser.fullName;
+
+    closeProfileEditor();
+    setMessage("profileMessage", result.message, "success");
+  } catch (error) {
+    setMessage("profileMessage", error.message, "error");
+  } finally {
+    saveButton.disabled = false;
+  }
+}
+
+
 document.addEventListener("DOMContentLoaded", () => {
   $("loginForm").addEventListener("submit", login);
   $("registerForm").addEventListener("submit", register);
+  $("editProfileBtn").addEventListener("click", openProfileEditor);
 
+$("cancelProfileEdit").addEventListener("click", closeProfileEditor);
+
+$("editProfileForm").addEventListener("submit", saveProfile);
   $("showRegister").addEventListener("click", event => {
     event.preventDefault();
     authPage("register");
@@ -671,4 +964,5 @@ document.addEventListener("DOMContentLoaded", () => {
   } else {
     authPage("login");
   }
+  
 });
