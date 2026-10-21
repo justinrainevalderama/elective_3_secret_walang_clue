@@ -1,36 +1,73 @@
+
 const API_BASE_URL = "https://elective-3-secret-walang-clue.vercel.app";
+
 let currentUser = null;
+let accessToken = null;
 let laptopList = [];
 let studentBorrowings = [];
 
 const $ = id => document.getElementById(id);
 
+const USER_SESSION_KEY = "cpeBorrowingUser";
+const TOKEN_SESSION_KEY = "cpeBorrowingToken";
+
+// -------------------- API HELPER --------------------
+
 async function api(path, options = {}) {
+  const headers = {
+    "Content-Type": "application/json"
+  };
+
+  // Protected backend routes require the Supabase access token.
+  if (accessToken) {
+    headers.Authorization = `Bearer ${accessToken}`;
+  }
+
   let response;
 
   try {
-    response = await fetch(API_BASE_URL + path, {
+    response = await fetch(`${API_BASE_URL}${path}`, {
       method: options.method || "GET",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: options.body === undefined
         ? undefined
         : JSON.stringify(options.body)
     });
-  } catch {
-    throw new Error("Cannot connect to the backend. Run node server.js first.");
+  } catch (error) {
+    console.error("Network request failed:", path, error);
+    throw new Error(
+      "Cannot connect to the backend. Check your internet connection and backend URL."
+    );
   }
 
   let data = {};
+
   try {
     data = await response.json();
-  } catch {}
+  } catch {
+    throw new Error(
+      `The backend returned an invalid response (HTTP ${response.status}).`
+    );
+  }
 
   if (!response.ok || data.success === false) {
-    throw new Error(data.message || `Request failed: ${response.status}`);
+    console.error("API error:", path, response.status, data);
+
+    if (response.status === 401) {
+      throw new Error(
+        data.message || "Your session has expired. Please log in again."
+      );
+    }
+
+    throw new Error(
+      data.message || `Request failed: HTTP ${response.status}`
+    );
   }
 
   return data;
 }
+
+// -------------------- GENERAL HELPERS --------------------
 
 function setMessage(id, text, type = "") {
   const element = $(id);
@@ -54,30 +91,67 @@ function formatDate(value) {
   if (!value) return "—";
 
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString();
+
+  return Number.isNaN(date.getTime())
+    ? "—"
+    : date.toLocaleString();
 }
 
 function badge(status) {
-  const clean = String(status || "unknown").toLowerCase();
-  return `<span class="status ${escapeHTML(clean)}">${escapeHTML(clean)}</span>`;
+  const cleanStatus = String(status || "unknown").toLowerCase();
+
+  return `<span class="status ${escapeHTML(cleanStatus)}">${escapeHTML(cleanStatus)}</span>`;
 }
 
+function saveSession() {
+  if (currentUser) {
+    sessionStorage.setItem(
+      USER_SESSION_KEY,
+      JSON.stringify(currentUser)
+    );
+  }
+
+  if (accessToken) {
+    sessionStorage.setItem(TOKEN_SESSION_KEY, accessToken);
+  }
+}
+
+function clearSession() {
+  currentUser = null;
+  accessToken = null;
+  laptopList = [];
+  studentBorrowings = [];
+
+  sessionStorage.removeItem(USER_SESSION_KEY);
+  sessionStorage.removeItem(TOKEN_SESSION_KEY);
+}
+
+// -------------------- LOGIN / REGISTER / LOGOUT --------------------
+
 function authPage(page) {
-  $("loginPage").classList.toggle("hidden", page !== "login");
-  $("registerPage").classList.toggle("hidden", page !== "register");
-  $("appShell").classList.add("hidden");
+  $("loginPage")?.classList.toggle("hidden", page !== "login");
+  $("registerPage")?.classList.toggle("hidden", page !== "register");
+  $("appShell")?.classList.add("hidden");
 }
 
 function logout() {
-  currentUser = null;
-  sessionStorage.removeItem("cpeBorrowingUser");
+  clearSession();
 
   authPage("login");
-  $("loginForm").reset();
+
+  $("loginForm")?.reset();
+  $("registerForm")?.reset();
+
   setMessage("loginMessage", "");
+  setMessage("registerMessage", "");
 }
 
 function enterApp() {
+  if (!currentUser || !accessToken) {
+    logout();
+    return;
+  }
+
   $("loginPage").classList.add("hidden");
   $("registerPage").classList.add("hidden");
   $("appShell").classList.remove("hidden");
@@ -87,58 +161,56 @@ function enterApp() {
   $("adminMenu").classList.toggle("hidden", !isAdmin);
   $("studentMenu").classList.toggle("hidden", isAdmin);
 
-  $("headerUser").textContent = currentUser.fullName || currentUser.email;
-  $("welcomeName").textContent = currentUser.fullName || "Student";
+  $("headerUser").textContent =
+    currentUser.fullName || currentUser.email || "User";
+
+  $("welcomeName").textContent =
+    currentUser.fullName || "Student";
 
   $("profileName").textContent = currentUser.fullName || "";
-  $("profileID").textContent = currentUser.institutionalId || "";
+  $("profileID").textContent = currentUser.institutionalId ?? "";
   $("profileEmail").textContent = currentUser.email || "";
   $("profileType").textContent = currentUser.accountType || "";
 
   showPage(isAdmin ? "adminDashboard" : "studentDashboard");
 }
 
-function showPage(pageId) {
-  document.querySelectorAll(".page").forEach(page => {
-    page.classList.toggle("active", page.id === pageId);
-  });
-
-  document.querySelectorAll(".sidebar-menu button[data-page]").forEach(button => {
-    button.classList.toggle("active", button.dataset.page === pageId);
-  });
-
-  const page = $(pageId);
-  const title = page?.querySelector(".page-title h1, .welcome-box h2, h2");
-
-  $("headerTitle").textContent = title?.textContent || "Dashboard";
-
-  if (!currentUser) return;
-
-  if (pageId === "studentDashboard") loadStudentLaptops();
-  if (pageId === "studentHistory") loadHistory();
-  if (pageId === "adminDashboard") loadAdminDashboard();
-  if (pageId === "borrowRequests") loadRequests();
-  if (pageId === "manageLaptops") loadInventory();
-  if (pageId === "registeredUsers") loadUsers();
-  if (pageId === "borrowingLogs") loadLogs();
-}
-
 async function login(event) {
   event.preventDefault();
+
   setMessage("loginMessage", "Signing in...");
 
   try {
-    const result = await api("/api/login", {
-      method: "POST",
-      body: {
-        email: $("loginEmail").value.trim(),
-        password: $("loginPassword").value
-      }
-    });
+    // Do not use a previously saved token for the login request.
+    const previousToken = accessToken;
+    accessToken = null;
+
+    let result;
+
+    try {
+      result = await api("/api/login", {
+        method: "POST",
+        body: {
+          email: $("loginEmail").value.trim().toLowerCase(),
+          password: $("loginPassword").value
+        }
+      });
+    } catch (error) {
+      accessToken = previousToken;
+      throw error;
+    }
+
+    if (!result.user || !result.session?.access_token) {
+      throw new Error(
+        "Login response is missing your account or access token."
+      );
+    }
 
     currentUser = result.user;
+    accessToken = result.session.access_token;
 
-    sessionStorage.setItem("cpeBorrowingUser", JSON.stringify(currentUser));
+    saveSession();
+
     setMessage("loginMessage", "");
     enterApp();
   } catch (error) {
@@ -154,13 +226,35 @@ async function register(event) {
   const email = $("registerEmail").value.trim().toLowerCase();
   const password = $("registerPassword").value;
 
+  if (!fullName || !institutionalId || !email || !password) {
+    setMessage(
+      "registerMessage",
+      "Please complete all registration fields.",
+      "error"
+    );
+    return;
+  }
+
+  if (!/^\d+$/.test(institutionalId)) {
+    setMessage(
+      "registerMessage",
+      "Institutional ID must contain digits only.",
+      "error"
+    );
+    return;
+  }
+
   if (password !== $("confirmPassword").value) {
     setMessage("registerMessage", "Passwords do not match.", "error");
     return;
   }
 
   if (password.length < 8) {
-    setMessage("registerMessage", "Password must be at least 8 characters.", "error");
+    setMessage(
+      "registerMessage",
+      "Password must be at least 8 characters.",
+      "error"
+    );
     return;
   }
 
@@ -169,10 +263,16 @@ async function register(event) {
   try {
     const result = await api("/api/register", {
       method: "POST",
-      body: { fullName, institutionalId, email, password }
+      body: {
+        fullName,
+        institutionalId,
+        email,
+        password
+      }
     });
 
     $("registerForm").reset();
+
     setMessage(
       "registerMessage",
       result.message || "Registration successful. You can now log in.",
@@ -183,9 +283,49 @@ async function register(event) {
   }
 }
 
+// -------------------- PAGE NAVIGATION --------------------
 
+function showPage(pageId) {
+  document.querySelectorAll(".page").forEach(page => {
+    page.classList.toggle("active", page.id === pageId);
+  });
+
+  document.querySelectorAll(
+    ".sidebar-menu button[data-page]"
+  ).forEach(button => {
+    button.classList.toggle(
+      "active",
+      button.dataset.page === pageId
+    );
+  });
+
+  const page = $(pageId);
+
+  const title = page?.querySelector(
+    ".page-title h1, .welcome-box h2, h2"
+  );
+
+  if ($("headerTitle")) {
+    $("headerTitle").textContent =
+      title?.textContent || "Dashboard";
+  }
+
+  if (!currentUser || !accessToken) return;
+
+  if (pageId === "studentDashboard") loadStudentLaptops();
+  if (pageId === "studentHistory") loadHistory();
+  if (pageId === "adminDashboard") loadAdminDashboard();
+  if (pageId === "borrowRequests") loadRequests();
+  if (pageId === "manageLaptops") loadInventory();
+  if (pageId === "registeredUsers") loadUsers();
+  if (pageId === "borrowingLogs") loadLogs();
+}
+
+// -------------------- STUDENT: LAPTOP LIST --------------------
 
 async function loadStudentLaptops() {
+  if (!currentUser || !accessToken) return;
+
   try {
     const [laptopResult, borrowingResult] = await Promise.all([
       api("/api/laptops"),
@@ -193,24 +333,27 @@ async function loadStudentLaptops() {
     ]);
 
     laptopList = laptopResult.laptops || [];
-    studentBorrowings = borrowingResult.history || [];
+
+    // Backend returns "borrowings", not "history".
+    studentBorrowings = borrowingResult.borrowings || [];
 
     renderLaptops();
+    setMessage("laptopMessage", "");
   } catch (error) {
     setMessage("laptopMessage", error.message, "error");
   }
 }
 
-
-
-
-
 function renderLaptops() {
-  const search = $("laptopSearch").value.trim().toLowerCase();
+  const search = $("laptopSearch")?.value.trim().toLowerCase() || "";
   const grid = $("laptopGrid");
 
+  if (!grid) return;
+
   const filtered = laptopList.filter(laptop =>
-    `${laptop.code} ${laptop.name}`.toLowerCase().includes(search)
+    `${laptop.code} ${laptop.name}`
+      .toLowerCase()
+      .includes(search)
   );
 
   grid.replaceChildren();
@@ -234,30 +377,27 @@ function renderLaptops() {
     const title = document.createElement("h3");
     title.textContent = `${laptop.code} — ${laptop.name}`;
 
-    // Find this student's latest active request for this laptop.
     const ownRecord = studentBorrowings.find(record =>
-      record.laptopId === laptop.id &&
+      String(record.laptopId) === String(laptop.id) &&
       ["pending", "borrowed"].includes(record.status)
     );
 
     const status = document.createElement("p");
-    let buttonLabel = "";
+
+    let buttonLabel;
     let action = null;
     let disabled = false;
 
     if (ownRecord?.status === "pending") {
       status.innerHTML = badge("pending");
-
       buttonLabel = "Cancel Request";
       action = button => cancelRequest(laptop.id, button);
     } else if (ownRecord?.status === "borrowed") {
       status.innerHTML = badge("borrowed");
-
       buttonLabel = "Return Laptop";
       action = button => returnLaptop(laptop.id, button);
     } else if (laptop.status === "available") {
       status.innerHTML = badge("available");
-
       buttonLabel = "Request Laptop";
       action = button => requestLaptop(laptop.id, button);
     } else {
@@ -268,18 +408,19 @@ function renderLaptops() {
 
     const button = document.createElement("button");
 
-if (buttonLabel === "Request Laptop") {
-  button.className = "request-btn";
-} else if (buttonLabel === "Cancel Request") {
-  button.className = "reject-btn";
-} else if (buttonLabel === "Return Laptop") {
-  button.className = "return-btn";
-} else {
-  button.className = "primary-btn";
-}
+    if (buttonLabel === "Request Laptop") {
+      button.className = "request-btn";
+    } else if (buttonLabel === "Cancel Request") {
+      button.className = "reject-btn";
+    } else if (buttonLabel === "Return Laptop") {
+      button.className = "return-btn";
+    } else {
+      button.className = "primary-btn";
+    }
 
-button.textContent = buttonLabel;
-button.disabled = disabled;
+    button.type = "button";
+    button.textContent = buttonLabel;
+    button.disabled = disabled;
 
     if (action) {
       button.addEventListener("click", () => action(button));
@@ -290,7 +431,7 @@ button.disabled = disabled;
   });
 }
 
-
+// -------------------- STUDENT: REQUEST LAPTOP --------------------
 
 async function requestLaptop(laptopId, button) {
   if (button.disabled) return;
@@ -301,10 +442,7 @@ async function requestLaptop(laptopId, button) {
   try {
     const result = await api("/api/borrow", {
       method: "POST",
-      body: {
-        userId: currentUser.id,
-        laptopId
-      }
+      body: { laptopId }
     });
 
     setMessage(
@@ -313,57 +451,65 @@ async function requestLaptop(laptopId, button) {
       "success"
     );
 
-    // Refresh laptop inventory and this student's requests
     await loadStudentLaptops();
+    await loadHistory();
   } catch (error) {
     setMessage("laptopMessage", error.message, "error");
 
-    // Restore the button if the request failed
     button.disabled = false;
     button.textContent = "Request Laptop";
   }
 }
 
+// -------------------- STUDENT: CANCEL REQUEST --------------------
 
 async function cancelRequest(laptopId, button) {
   if (!confirm("Are you sure you want to cancel this request?")) {
     return;
   }
 
-  button.disabled = true;
+  if (button) button.disabled = true;
 
   try {
     const result = await api("/api/cancel-request", {
       method: "POST",
-      body: {
-        userId: currentUser.id,
-        laptopId
-      }
+      body: { laptopId }
     });
 
     setMessage("laptopMessage", result.message, "success");
+    setMessage("historyMessage", result.message, "success");
 
     await loadStudentLaptops();
     await loadHistory();
   } catch (error) {
     setMessage("laptopMessage", error.message, "error");
-    button.disabled = false;
+    setMessage("historyMessage", error.message, "error");
+
+    if (button) button.disabled = false;
   }
 }
 
+// -------------------- STUDENT: BORROWING HISTORY --------------------
 
 async function loadHistory() {
+  if (!currentUser || !accessToken) return;
+
   try {
     const result = await api(
       `/api/borrowings/${encodeURIComponent(currentUser.id)}`
     );
 
-    const history = result.history || [];
+    // Backend returns "borrowings", not "history".
+    const history = result.borrowings || [];
     const tbody = $("historyTable");
+
+    if (!tbody) return;
+
     tbody.replaceChildren();
 
     if (!history.length) {
-      tbody.innerHTML = '<tr><td colspan="6">No borrowing history yet.</td></tr>';
+      tbody.innerHTML =
+        '<tr><td colspan="6">No borrowing history yet.</td></tr>';
       return;
     }
 
@@ -381,84 +527,105 @@ async function loadHistory() {
 
       const action = tr.lastElementChild;
 
-      
-if (record.status === "pending") {
-  const button = document.createElement("button");
-  button.className = "reject-btn";
-  button.textContent = "Cancel Request";
+      if (record.status === "pending") {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "reject-btn";
+        button.textContent = "Cancel Request";
 
-  button.addEventListener("click", async () => {
-    await cancelRequest(record.laptopId, button);
-  });
+        button.addEventListener("click", () =>
+          cancelRequest(record.laptopId, button)
+        );
 
-  action.append(button);
-} else if (record.status === "borrowed") {
-  const button = document.createElement("button");
-  button.className = "return-btn";
-  button.textContent = "Return Laptop";
+        action.append(button);
+      } else if (record.status === "borrowed") {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "return-btn";
+        button.textContent = "Return Laptop";
 
-  button.addEventListener("click", async () => {
-    await returnLaptop(record.laptopId, button);
-  });
+        button.addEventListener("click", () =>
+          returnLaptop(record.laptopId, button)
+        );
 
-  action.append(button);
-} else {
-  action.textContent = "—";
-}
-
+        action.append(button);
+      } else {
+        action.textContent = "—";
+      }
 
       tbody.append(tr);
     });
+
+    setMessage("historyMessage", "");
   } catch (error) {
     setMessage("historyMessage", error.message, "error");
   }
 }
 
-async function returnLaptop(laptopId, button) {
-  if (!confirm("Confirm that you are returning this laptop?")) return;
+// -------------------- STUDENT: RETURN LAPTOP --------------------
 
-  button.disabled = true;
+async function returnLaptop(laptopId, button) {
+  if (!confirm("Confirm that you are returning this laptop?")) {
+    return;
+  }
+
+  if (button) button.disabled = true;
 
   try {
     const result = await api("/api/return", {
       method: "POST",
-      body: { userId: currentUser.id, laptopId }
+      body: { laptopId }
     });
 
     setMessage("historyMessage", result.message, "success");
+    setMessage("laptopMessage", result.message, "success");
 
-await loadStudentLaptops();
-await loadHistory();
+    await loadStudentLaptops();
+    await loadHistory();
   } catch (error) {
     setMessage("historyMessage", error.message, "error");
-    button.disabled = false;
+    setMessage("laptopMessage", error.message, "error");
+
+    if (button) button.disabled = false;
   }
 }
 
-function adminQuery(path) {
-  const separator = path.includes("?") ? "&" : "?";
-  return `${path}${separator}userId=${encodeURIComponent(currentUser.id)}`;
-}
+// -------------------- ADMIN: DASHBOARD --------------------
 
 async function loadAdminDashboard() {
   try {
-    const result = await api(adminQuery("/api/admin/laptops"));
+    const result = await api("/api/admin/laptops");
     const laptops = result.laptops || [];
 
-    $("statTotal").textContent = laptops.length;
-    $("statAvailable").textContent =
-      laptops.filter(laptop => laptop.status === "available").length;
-    $("statBorrowed").textContent =
-      laptops.filter(laptop => laptop.status === "borrowed").length;
+    if ($("statTotal")) {
+      $("statTotal").textContent = laptops.length;
+    }
 
-    const requests = await api(adminQuery("/api/admin/requests"));
-    $("statPending").textContent = (requests.requests || []).length;
+    if ($("statAvailable")) {
+      $("statAvailable").textContent =
+        laptops.filter(laptop => laptop.status === "available").length;
+    }
+
+    if ($("statBorrowed")) {
+      $("statBorrowed").textContent =
+        laptops.filter(laptop => laptop.status === "borrowed").length;
+    }
+
+    const requestResult = await api("/api/admin/requests");
+
+    if ($("statPending")) {
+      $("statPending").textContent =
+        (requestResult.requests || []).length;
+    }
+
     await loadRecentActivity();
   } catch (error) {
-    console.error("Dashboard:", error.message);
+    console.error("Dashboard error:", error);
+    setMessage("dashboardMessage", error.message, "error");
   }
 }
 
+// -------------------- ADMIN: RECENT ACTIVITY --------------------
 
 async function loadRecentActivity() {
   const container = $("recentActivityList");
@@ -466,7 +633,7 @@ async function loadRecentActivity() {
   if (!container) return;
 
   try {
-    const result = await api(adminQuery("/api/admin/activity"));
+    const result = await api("/api/admin/activity");
     const activities = result.activities || [];
 
     container.replaceChildren();
@@ -479,72 +646,85 @@ async function loadRecentActivity() {
       return;
     }
 
-    const icons = {
-      request: "fa-laptop",
-      cancel: "fa-times-circle",
-      return: "fa-check-circle",
-      approval: "fa-clipboard-check"
-    };
-
     activities.forEach(activity => {
       const item = document.createElement("div");
       item.className = "activity-item";
 
+      const status = String(activity.status || "").toLowerCase();
+
+      const iconClasses = {
+        pending: "fa-clock",
+        borrowed: "fa-laptop",
+        returned: "fa-check-circle",
+        rejected: "fa-times-circle",
+        cancelled: "fa-ban"
+      };
+
       const icon = document.createElement("div");
-      icon.className = `activity-icon ${activity.type}`;
+      icon.className = "activity-icon";
 
       const iconElement = document.createElement("i");
-      iconElement.className = `fas ${icons[activity.type] || "fa-history"}`;
+      iconElement.className =
+        `fas ${iconClasses[status] || "fa-history"}`;
+
       icon.append(iconElement);
 
       const details = document.createElement("div");
       details.className = "activity-details";
 
       const description = document.createElement("p");
+
       const student = document.createElement("strong");
-      student.textContent = activity.studentName;
+      student.textContent = activity.studentName || "Unknown student";
+
+      const laptopDescription =
+        `${activity.laptopCode || "N/A"} — ${activity.laptopName || "Unknown laptop"}`;
 
       description.append(
         student,
         document.createTextNode(
-          ` ${activity.message} ${activity.laptopCode} — ${activity.laptopName}.`
+          ` — ${status || "unknown"}: ${laptopDescription}.`
         )
       );
 
       const meta = document.createElement("div");
       meta.className = "activity-meta";
-
-      const date = new Date(activity.timestamp);
-      meta.textContent = Number.isNaN(date.getTime())
-        ? "Date unavailable"
-        : date.toLocaleString();
+      meta.textContent = formatDate(activity.date);
 
       details.append(description, meta);
       item.append(icon, details);
       container.append(item);
     });
   } catch (error) {
-    console.error("Recent activity:", error.message);
+    console.error("Recent activity error:", error);
 
     container.replaceChildren();
 
     const message = document.createElement("p");
     message.className = "activity-empty";
-    message.textContent = "Unable to load recent activity.";
+    message.textContent = error.message || "Unable to load recent activity.";
+
     container.append(message);
   }
 }
 
+// -------------------- ADMIN: BORROW REQUESTS --------------------
 
 async function loadRequests() {
   try {
-    const result = await api(adminQuery("/api/admin/requests"));
+    const result = await api("/api/admin/requests");
     const requests = result.requests || [];
     const tbody = $("requestsTable");
+
+    if (!tbody) return;
+
     tbody.replaceChildren();
 
     if (!requests.length) {
-      tbody.innerHTML = '<tr><td colspan="6">No pending requests.</td></tr>';
+      tbody.innerHTML =
+        '<tr><td colspan="6">No pending requests.</td></tr>';
+      setMessage("requestsMessage", "");
+      return;
     }
 
     requests.forEach(request => {
@@ -562,21 +742,28 @@ async function loadRequests() {
       const action = tr.lastElementChild;
 
       const accept = document.createElement("button");
+      accept.type = "button";
       accept.className = "approve-btn";
       accept.textContent = "Accept";
-      accept.addEventListener("click", () => {
-  decideRequest(request.id, "accept", accept, reject);});
 
       const reject = document.createElement("button");
+      reject.type = "button";
       reject.className = "reject-btn";
       reject.textContent = "Reject";
-      reject.addEventListener("click", () => {
-  decideRequest(request.id, "reject", accept, reject);});
+
+      accept.addEventListener("click", () =>
+        decideRequest(request.id, "accept", accept, reject)
+      );
+
+      reject.addEventListener("click", () =>
+        decideRequest(request.id, "reject", accept, reject)
+      );
 
       action.append(accept, reject);
       tbody.append(tr);
     });
 
+    setMessage("requestsMessage", "");
   } catch (error) {
     setMessage("requestsMessage", error.message, "error");
   }
@@ -600,7 +787,7 @@ async function decideRequest(
       `/api/admin/requests/${encodeURIComponent(requestId)}`,
       {
         method: "POST",
-        body: { userId: currentUser.id, decision }
+        body: { decision }
       }
     );
 
@@ -620,43 +807,55 @@ async function decideRequest(
   }
 }
 
+// -------------------- ADMIN: LAPTOP INVENTORY --------------------
+
 async function loadInventory() {
   try {
-    const result = await api(adminQuery("/api/admin/laptops"));
+    const result = await api("/api/admin/laptops");
     const laptops = result.laptops || [];
     const tbody = $("inventoryTable");
+
+    if (!tbody) return;
+
     tbody.replaceChildren();
 
     if (!laptops.length) {
-      tbody.innerHTML = '<tr><td colspan="4">No laptops in inventory.</td></tr>';
+      tbody.innerHTML =
+        '<tr><td colspan="4">No laptops in inventory.</td></tr>';
+      return;
     }
 
     laptops.forEach(laptop => {
       const tr = document.createElement("tr");
 
       tr.innerHTML = `
-        <td>${escapeHTML(laptop.laptop_code || laptop.code)}</td>
-        <td>${escapeHTML(laptop.laptop_name || laptop.name)}</td>
+        <td>${escapeHTML(laptop.code)}</td>
+        <td>${escapeHTML(laptop.name)}</td>
         <td>${badge(laptop.status)}</td>
         <td></td>
       `;
 
       const editButton = document.createElement("button");
-      editButton.className = "edit-btn";
       editButton.type = "button";
+      editButton.className = "edit-btn";
       editButton.innerHTML = '<i class="fas fa-pen"></i> Edit';
       editButton.addEventListener("click", () => openEditLaptop(laptop));
 
       const removeButton = document.createElement("button");
-      removeButton.className = "delete-btn";
       removeButton.type = "button";
+      removeButton.className = "delete-btn";
       removeButton.textContent = "Remove";
-      removeButton.disabled = laptop.status === "borrowed";
-      removeButton.addEventListener("click", () => removeLaptop(laptop.id));
+      removeButton.disabled = ["borrowed", "pending"].includes(laptop.status);
+
+      removeButton.addEventListener("click", () =>
+        removeLaptop(laptop.id)
+      );
 
       tr.lastElementChild.append(editButton, removeButton);
       tbody.append(tr);
     });
+
+    setMessage("inventoryMessage", "");
   } catch (error) {
     setMessage("inventoryMessage", error.message, "error");
   }
@@ -664,18 +863,23 @@ async function loadInventory() {
 
 function openEditLaptop(laptop) {
   $("editLaptopId").value = laptop.id;
-  $("editLaptopName").value = laptop.laptop_name || laptop.name || "";
-  $("editLaptopCode").value = laptop.laptop_code || laptop.code || "";
+  $("editLaptopName").value = laptop.name || "";
+  $("editLaptopCode").value = laptop.code || "";
 
   setMessage("editLaptopMessage", "");
+
   $("editLaptopPanel").classList.remove("hidden");
-  $("editLaptopPanel").scrollIntoView({ behavior: "smooth", block: "start" });
+  $("editLaptopPanel").scrollIntoView({
+    behavior: "smooth",
+    block: "start"
+  });
+
   $("editLaptopName").focus();
 }
 
 function cancelEditLaptop() {
-  $("editLaptopForm").reset();
-  $("editLaptopPanel").classList.add("hidden");
+  $("editLaptopForm")?.reset();
+  $("editLaptopPanel")?.classList.add("hidden");
   setMessage("editLaptopMessage", "");
 }
 
@@ -687,12 +891,18 @@ async function saveLaptopChanges(event) {
   const laptopCode = $("editLaptopCode").value.trim();
 
   if (!laptopName || !laptopCode) {
-    setMessage("editLaptopMessage", "Laptop name and code are required.", "error");
+    setMessage(
+      "editLaptopMessage",
+      "Laptop name and code are required.",
+      "error"
+    );
     return;
   }
 
   const saveButton = $("saveLaptopChanges");
-  saveButton.disabled = true;
+
+  if (saveButton) saveButton.disabled = true;
+
   setMessage("editLaptopMessage", "Saving changes...");
 
   try {
@@ -700,7 +910,7 @@ async function saveLaptopChanges(event) {
       `/api/admin/laptops/${encodeURIComponent(laptopId)}`,
       {
         method: "PATCH",
-        body: { userId: currentUser.id, laptopName, laptopCode }
+        body: { laptopName, laptopCode }
       }
     );
 
@@ -711,64 +921,88 @@ async function saveLaptopChanges(event) {
     );
 
     cancelEditLaptop();
+
     await loadInventory();
-    await loadStudentLaptops();
+
+    // Only student accounts can access the student borrowing endpoint.
+    if (currentUser?.accountType === "student") {
+      await loadStudentLaptops();
+    }
   } catch (error) {
     setMessage("editLaptopMessage", error.message, "error");
   } finally {
-    saveButton.disabled = false;
+    if (saveButton) saveButton.disabled = false;
   }
 }
 
 async function addLaptop(event) {
   event.preventDefault();
 
+  const laptopName = $("newLaptopName").value.trim();
+  const laptopCode = $("newLaptopCode").value.trim();
+
+  if (!laptopName || !laptopCode) {
+    setMessage(
+      "inventoryMessage",
+      "Laptop name and code are required.",
+      "error"
+    );
+    return;
+  }
+
   try {
     const result = await api("/api/admin/laptops", {
       method: "POST",
-      body: {
-        userId: currentUser.id,
-        laptopName: $("newLaptopName").value.trim(),
-        laptopCode: $("newLaptopCode").value.trim()
-      }
+      body: { laptopName, laptopCode }
     });
 
     setMessage("inventoryMessage", result.message, "success");
+
     $("addLaptopForm").reset();
+
     await loadInventory();
+    await loadAdminDashboard();
   } catch (error) {
     setMessage("inventoryMessage", error.message, "error");
   }
 }
 
 async function removeLaptop(id) {
-  if (!confirm("Remove this laptop from the inventory?")) return;
+  if (!confirm("Remove this laptop from the inventory?")) {
+    return;
+  }
 
   try {
     const result = await api(
       `/api/admin/laptops/${encodeURIComponent(id)}`,
-      {
-        method: "DELETE",
-        body: { userId: currentUser.id }
-      }
+      { method: "DELETE" }
     );
 
     setMessage("inventoryMessage", result.message, "success");
+
     await loadInventory();
+    await loadAdminDashboard();
   } catch (error) {
     setMessage("inventoryMessage", error.message, "error");
   }
 }
 
+// -------------------- ADMIN: REGISTERED USERS --------------------
+
 async function loadUsers() {
   try {
-    const result = await api(adminQuery("/api/admin/users"));
+    const result = await api("/api/admin/users");
     const users = result.users || [];
     const tbody = $("usersTable");
+
+    if (!tbody) return;
+
     tbody.replaceChildren();
 
     if (!users.length) {
-      tbody.innerHTML = '<tr><td colspan="4">No users found.</td></tr>';
+      tbody.innerHTML =
+        '<tr><td colspan="4">No users found.</td></tr>';
+      return;
     }
 
     users.forEach(user => {
@@ -781,36 +1015,46 @@ async function loadUsers() {
         user.accountType
       ].forEach(value => {
         const td = document.createElement("td");
-        td.textContent = value || "—";
+        td.textContent = value ?? "—";
         tr.append(td);
       });
 
       tbody.append(tr);
     });
+
+    setMessage("usersMessage", "");
   } catch (error) {
     setMessage("usersMessage", error.message, "error");
   }
 }
 
+// -------------------- ADMIN: BORROWING LOGS --------------------
+
 async function loadLogs() {
   try {
-    const result = await api(adminQuery("/api/admin/logs"));
+    const result = await api("/api/admin/logs");
     const logs = result.logs || [];
     const tbody = $("logsTable");
+
+    if (!tbody) return;
+
     tbody.replaceChildren();
 
     if (!logs.length) {
-      tbody.innerHTML = '<tr><td colspan="6">No borrowing records.</td></tr>';
+      tbody.innerHTML =
+        '<tr><td colspan="6">No borrowing records.</td></tr>';
+      return;
     }
 
     logs.forEach(record => {
       const tr = document.createElement("tr");
 
+      // Backend returns flat fields, not nested student/laptop objects.
       [
-        record.student?.name,
-        record.student?.institutionalId,
-        `${record.laptop?.code || ""} ${record.laptop?.name || ""}`.trim(),
-        formatDate(record.borrowedAt),
+        record.studentName,
+        record.institutionalId,
+        `${record.laptopCode || ""} ${record.laptopName || ""}`.trim(),
+        formatDate(record.requestedAt),
         formatDate(record.returnedAt)
       ].forEach(value => {
         const td = document.createElement("td");
@@ -820,29 +1064,36 @@ async function loadLogs() {
 
       const status = document.createElement("td");
       status.innerHTML = badge(record.status);
+
       tr.append(status);
       tbody.append(tr);
     });
+
+    setMessage("logsMessage", "");
   } catch (error) {
     setMessage("logsMessage", error.message, "error");
   }
 }
 
+// -------------------- STUDENT: PROFILE --------------------
 
 function openProfileEditor() {
+  if (!currentUser) return;
+
   $("editProfileName").value = currentUser.fullName || "";
-  $("editProfileID").value = currentUser.institutionalId || "";
+  $("editProfileID").value = currentUser.institutionalId ?? "";
   $("editProfileEmail").value = currentUser.email || "";
   $("editProfileType").value = currentUser.accountType || "";
 
   $("profileView").classList.add("hidden");
   $("editProfileForm").classList.remove("hidden");
+
   setMessage("profileMessage", "");
 }
 
 function closeProfileEditor() {
-  $("editProfileForm").classList.add("hidden");
-  $("profileView").classList.remove("hidden");
+  $("editProfileForm")?.classList.add("hidden");
+  $("profileView")?.classList.remove("hidden");
   setMessage("profileMessage", "");
 }
 
@@ -861,11 +1112,21 @@ async function saveProfile(event) {
     return;
   }
 
+  if (!/^\d+$/.test(institutionalId)) {
+    setMessage(
+      "profileMessage",
+      "Institutional ID must contain digits only.",
+      "error"
+    );
+    return;
+  }
+
   const saveButton = $("editProfileForm").querySelector(
     'button[type="submit"]'
   );
 
-  saveButton.disabled = true;
+  if (saveButton) saveButton.disabled = true;
+
   setMessage("profileMessage", "Saving changes...");
 
   try {
@@ -877,77 +1138,95 @@ async function saveProfile(event) {
       }
     );
 
-    // Update the current session with the saved profile details.
-    currentUser.fullName = result.profile.fullName;
-    currentUser.institutionalId = result.profile.institutionalId;
+    // Backend returns "user", not "profile".
+    const updatedUser = result.user;
 
-    sessionStorage.setItem(
-      "cpeBorrowingUser",
-      JSON.stringify(currentUser)
-    );
+    if (!updatedUser) {
+      throw new Error("The backend did not return the updated profile.");
+    }
 
-    // Refresh displayed profile information.
-    $("profileName").textContent = currentUser.fullName;
-    $("profileID").textContent = currentUser.institutionalId;
+    currentUser.fullName = updatedUser.fullName;
+    currentUser.institutionalId = updatedUser.institutionalId;
+
+    saveSession();
+
+    $("profileName").textContent = currentUser.fullName || "";
+    $("profileID").textContent = currentUser.institutionalId ?? "";
     $("profileEmail").textContent = currentUser.email || "";
     $("profileType").textContent = currentUser.accountType || "";
 
     $("headerUser").textContent =
       currentUser.fullName || currentUser.email;
 
-    $("welcomeName").textContent = currentUser.fullName;
+    $("welcomeName").textContent =
+      currentUser.fullName || "Student";
 
     closeProfileEditor();
-    setMessage("profileMessage", result.message, "success");
+
+    setMessage(
+      "profileMessage",
+      "Profile updated successfully.",
+      "success"
+    );
   } catch (error) {
     setMessage("profileMessage", error.message, "error");
   } finally {
-    saveButton.disabled = false;
+    if (saveButton) saveButton.disabled = false;
   }
 }
 
+// -------------------- INITIALIZATION --------------------
 
 document.addEventListener("DOMContentLoaded", () => {
-  $("loginForm").addEventListener("submit", login);
-  $("registerForm").addEventListener("submit", register);
-  $("editProfileBtn").addEventListener("click", openProfileEditor);
+  $("loginForm")?.addEventListener("submit", login);
+  $("registerForm")?.addEventListener("submit", register);
 
-$("cancelProfileEdit").addEventListener("click", closeProfileEditor);
+  $("editProfileBtn")?.addEventListener("click", openProfileEditor);
+  $("cancelProfileEdit")?.addEventListener("click", closeProfileEditor);
+  $("editProfileForm")?.addEventListener("submit", saveProfile);
 
-$("editProfileForm").addEventListener("submit", saveProfile);
-  $("showRegister").addEventListener("click", event => {
+  $("showRegister")?.addEventListener("click", event => {
     event.preventDefault();
     authPage("register");
   });
 
-  $("showLogin").addEventListener("click", event => {
+  $("showLogin")?.addEventListener("click", event => {
     event.preventDefault();
     authPage("login");
   });
 
-  $("studentLogout").addEventListener("click", logout);
-  $("adminLogout").addEventListener("click", logout);
+  $("studentLogout")?.addEventListener("click", logout);
+  $("adminLogout")?.addEventListener("click", logout);
 
-  $("addLaptopForm").addEventListener("submit", addLaptop);
-  $("editLaptopForm").addEventListener("submit", saveLaptopChanges);
-  $("cancelEditLaptop").addEventListener("click", cancelEditLaptop);
+  $("addLaptopForm")?.addEventListener("submit", addLaptop);
+  $("editLaptopForm")?.addEventListener("submit", saveLaptopChanges);
+  $("cancelEditLaptop")?.addEventListener("click", cancelEditLaptop);
 
-  $("laptopSearch").addEventListener("input", renderLaptops);
-  $("refreshRequests").addEventListener("click", loadRequests);
+  $("laptopSearch")?.addEventListener("input", renderLaptops);
+  $("refreshRequests")?.addEventListener("click", loadRequests);
 
-  document.querySelectorAll(".sidebar-menu button[data-page]").forEach(button => {
-    button.addEventListener("click", () => showPage(button.dataset.page));
+  document.querySelectorAll(
+    ".sidebar-menu button[data-page]"
+  ).forEach(button => {
+    button.addEventListener("click", () =>
+      showPage(button.dataset.page)
+    );
   });
 
   document.querySelectorAll("[data-goto]").forEach(button => {
-    button.addEventListener("click", () => showPage(button.dataset.goto));
+    button.addEventListener("click", () =>
+      showPage(button.dataset.goto)
+    );
   });
 
-  const saved = sessionStorage.getItem("cpeBorrowingUser");
+  // Restore both the user and the Supabase token after a page refresh.
+  const savedUser = sessionStorage.getItem(USER_SESSION_KEY);
+  const savedToken = sessionStorage.getItem(TOKEN_SESSION_KEY);
 
-  if (saved) {
+  if (savedUser && savedToken) {
     try {
-      currentUser = JSON.parse(saved);
+      currentUser = JSON.parse(savedUser);
+      accessToken = savedToken;
 
       if (
         currentUser?.id &&
@@ -957,11 +1236,11 @@ $("editProfileForm").addEventListener("submit", saveProfile);
       } else {
         logout();
       }
-    } catch {
+    } catch (error) {
+      console.error("Could not restore session:", error);
       logout();
     }
   } else {
-    authPage("login");
+    logout();
   }
-  
 });
