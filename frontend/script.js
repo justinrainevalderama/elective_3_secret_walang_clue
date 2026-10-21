@@ -1,4 +1,4 @@
-const API_BASE_URL = "http://localhost:3000";
+const API_BASE_URL = "https://your-backend.vercel.app";
 
 let currentUser = null;
 let laptopList = [];
