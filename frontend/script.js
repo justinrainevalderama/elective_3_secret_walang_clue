@@ -6,27 +6,40 @@ let studentBorrowings = [];
 const $ = id => document.getElementById(id);
 
 async function api(path, options = {}) {
+  const url = API_BASE_URL + path;
+
   let response;
 
   try {
-    response = await fetch(API_BASE_URL + path, {
+    response = await fetch(url, {
       method: options.method || "GET",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json"
+      },
       body: options.body === undefined
         ? undefined
         : JSON.stringify(options.body)
     });
-  } catch {
-    throw new Error("Cannot connect to the backend. Run node server.js first.");
+  } catch (error) {
+    console.error("Network request failed:", url, error);
+    throw new Error(
+      Cannot reach ${url}. Check the Network tab and Console.
+    );
   }
 
+  const text = await response.text();
   let data = {};
+
   try {
-    data = await response.json();
-  } catch {}
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    console.error("Non-JSON response:", text);
+  }
 
   if (!response.ok || data.success === false) {
-    throw new Error(data.message || `Request failed: ${response.status}`);
+    throw new Error(
+      data.message || HTTP ${response.status}: ${text || "No response body"}
+    );
   }
 
   return data;
