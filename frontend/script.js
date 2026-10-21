@@ -175,48 +175,66 @@ function enterApp() {
   showPage(isAdmin ? "adminDashboard" : "studentDashboard");
 }
 
+
 async function login(event) {
   event.preventDefault();
 
   setMessage("loginMessage", "Signing in...");
 
   try {
-    // Do not use a previously saved token for the login request.
-    const previousToken = accessToken;
+    // Clear any old session before logging in.
     accessToken = null;
+    currentUser = null;
 
-    let result;
-
-    try {
-      result = await api("/api/login", {
-        method: "POST",
-        body: {
-          email: $("loginEmail").value.trim().toLowerCase(),
-          password: $("loginPassword").value
-        }
-      });
-    } catch (error) {
-      accessToken = previousToken;
-      throw error;
-    }
+    const result = await api("/api/login", {
+      method: "POST",
+      body: {
+        email: $("loginEmail").value.trim().toLowerCase(),
+        password: $("loginPassword").value
+      }
+    });
 
     if (!result.user || !result.session?.access_token) {
+      console.error("Login response is missing required fields:", {
+        hasUser: !!result.user,
+        hasSession: !!result.session,
+        hasAccessToken: !!result.session?.access_token
+      });
+
       throw new Error(
-        "Login response is missing your account or access token."
+        "Login succeeded, but the backend did not return an access token."
       );
     }
 
+    // Save the user and access token.
     currentUser = result.user;
     accessToken = result.session.access_token;
 
-    saveSession();
+    sessionStorage.setItem(
+      "cpeBorrowingUser",
+      JSON.stringify(currentUser)
+    );
+
+    sessionStorage.setItem(
+      "cpeBorrowingToken",
+      accessToken
+    );
+
+    console.log("Login successful. Token saved:", !!accessToken);
+    console.log(
+      "Token storage verified:",
+      !!sessionStorage.getItem("cpeBorrowingToken")
+    );
 
     setMessage("loginMessage", "");
     enterApp();
+
   } catch (error) {
+    console.error("Login error:", error);
     setMessage("loginMessage", error.message, "error");
   }
 }
+
 
 async function register(event) {
   event.preventDefault();
