@@ -1,16 +1,4 @@
 
-/*
-  CPE Laptop Borrowing System
-  Frontend JavaScript
-
-  Local development:
-    http://localhost:3000
-
-  Vercel deployment:
-    Set window.API_BASE_URL before this script loads,
-    or replace the fallback below with your deployed backend URL.
-*/
-
 const API_BASE_URL = (
   window.API_BASE_URL || "http://localhost:3000"
 ).replace(/\/+$/, "");
