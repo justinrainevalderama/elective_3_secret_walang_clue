@@ -1,5 +1,4 @@
-const API_BASE_URL = "https://your-backend.vercel.app";
-
+const API_BASE_URL = "https://elective-3-secret-walang-clue-3sscrzx4d-justinrainievalderama.vercel.app";
 let currentUser = null;
 let laptopList = [];
 let studentBorrowings = [];
