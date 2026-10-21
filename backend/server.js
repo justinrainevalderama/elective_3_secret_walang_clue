@@ -8,25 +8,38 @@ const { createClient } = require("@supabase/supabase-js");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(cors());
-app.use(express.json());
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_SECRET_KEY;
 
-if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SECRET_KEY) {
-  console.error("Missing Supabase settings in .env");
+if (!supabaseUrl || !supabaseKey) {
+  console.error("Missing SUPABASE_URL or SUPABASE_SECRET_KEY in .env");
   process.exit(1);
 }
 
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SECRET_KEY
-);
+// This secret key must only be used by the backend.
+const supabase = createClient(supabaseUrl, supabaseKey, {
+  auth: {
+    autoRefreshToken: false,
+    persistSession: false
+  }
+});
+
+app.use(cors({
+  origin: process.env.FRONTEND_URL
+    ? process.env.FRONTEND_URL.split(",").map(url => url.trim())
+    : true
+}));
+app.use(express.json({ limit: "1mb" }));
+
+const asyncRoute = handler => (req, res, next) =>
+  Promise.resolve(handler(req, res, next)).catch(next);
 
 const fail = (res, status, message) =>
   res.status(status).json({ success: false, message });
 
-async function getProfile(userId) {
-  if (!userId) return null;
+const clean = value => String(value ?? "").trim();
 
+async function getProfile(userId) {
   const { data, error } = await supabase
     .from("profiles")
     .select("id, full_name, institutional_id, account_type")
@@ -37,20 +50,84 @@ async function getProfile(userId) {
   return data;
 }
 
-async function isAdmin(userId) {
-  const profile = await getProfile(userId);
-  return profile?.account_type === "admin";
-}
+// Authenticate requests using the Supabase access token.
+const authenticate = asyncRoute(async (req, res, next) => {
+  const header = req.headers.authorization || "";
+  const token = header.startsWith("Bearer ")
+    ? header.slice(7).trim()
+    : "";
 
-async function requireAdmin(userId, res) {
-  try {
-    if (userId && await isAdmin(userId)) return true;
-  } catch (error) {
-    console.error("Admin authorization error:", error.message);
+  if (!token) return fail(res, 401, "Please log in again.");
+
+  const { data, error } = await supabase.auth.getUser(token);
+
+  if (error || !data?.user) {
+    return fail(res, 401, "Your session has expired. Please log in again.");
   }
 
-  fail(res, 403, "Admin access required.");
-  return false;
+  req.authUser = data.user;
+  req.profile = await getProfile(data.user.id);
+
+  if (!req.profile) {
+    return fail(res, 403, "Your account profile was not found.");
+  }
+
+  next();
+});
+
+const requireStudent = (req, res, next) => {
+  if (req.profile?.account_type !== "student") {
+    return fail(res, 403, "This action is only available to students.");
+  }
+  next();
+};
+
+const requireAdmin = (req, res, next) => {
+  if (req.profile?.account_type !== "admin") {
+    return fail(res, 403, "Administrator access is required.");
+  }
+  next();
+};
+
+async function getLaptop(laptopId) {
+  const { data, error } = await supabase
+    .from("laptops")
+    .select("id, laptop_name, laptop_code, status")
+    .eq("id", laptopId)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data;
+}
+
+async function getBorrowingRows(userId) {
+  const { data, error } = await supabase
+    .from("borrowings")
+    .select("id, user_id, laptop_id, status, borrowed_at, returned_at")
+    .eq("user_id", userId)
+    .order("borrowed_at", { ascending: false });
+
+  if (error) throw error;
+
+  const laptopIds = [...new Set((data || []).map(row => row.laptop_id))];
+  let laptops = [];
+
+  if (laptopIds.length) {
+    const result = await supabase
+      .from("laptops")
+      .select("id, laptop_name, laptop_code, status")
+      .in("id", laptopIds);
+
+    if (result.error) throw result.error;
+    laptops = result.data || [];
+  }
+
+  const laptopMap = new Map(laptops.map(item => [item.id, item]));
+
+  return (data || []).map(row => ({
+    ...row,
+    laptop: laptopMap.get(row.laptop_id) || null
+  }));
 }
 
 app.get("/", (req, res) => {
@@ -60,434 +137,337 @@ app.get("/", (req, res) => {
   });
 });
 
-// REGISTER STUDENT
-app.post("/api/register", async (req, res) => {
-  let userId;
+// -------------------- REGISTER --------------------
 
-  try {
-    const { fullName, institutionalId, email, password } = req.body;
+app.post("/api/register", asyncRoute(async (req, res) => {
+  const fullName = clean(req.body.fullName);
+  const institutionalId = clean(req.body.institutionalId);
+  const email = clean(req.body.email).toLowerCase();
+  const password = String(req.body.password || "");
 
-    if (
-      !fullName?.trim() ||
-      !institutionalId?.trim() ||
-      !email?.trim() ||
-      !password
-    ) {
-      return fail(res, 400, "Please complete all fields.");
-    }
-
-    if (password.length < 8) {
-      return fail(res, 400, "Password must be at least 8 characters.");
-    }
-
-    const normalizedEmail = email.trim().toLowerCase();
-
-    const { data: auth, error: authError } =
-      await supabase.auth.admin.createUser({
-        email: normalizedEmail,
-        password,
-        email_confirm: true
-      });
-
-    if (authError) {
-      return fail(res, 400, authError.message);
-    }
-
-    userId = auth.user.id;
-
-    const { error: profileError } = await supabase
-      .from("profiles")
-      .insert({
-        id: userId,
-        full_name: fullName.trim(),
-        institutional_id: institutionalId.trim(),
-        account_type: "student"
-      });
-
-    if (profileError) {
-      await supabase.auth.admin.deleteUser(userId);
-
-      return fail(
-        res,
-        400,
-        profileError.code === "23505"
-          ? "That institutional ID is already registered."
-          : "Unable to create the student profile."
-      );
-    }
-
-    return res.status(201).json({
-      success: true,
-      message: "Registration successful. You can now log in."
-    });
-  } catch (error) {
-    console.error("Registration error:", error);
-
-    if (userId) {
-      await supabase.auth.admin.deleteUser(userId).catch(() => {});
-    }
-
-    return fail(res, 500, "Registration failed.");
+  if (!fullName || !institutionalId || !email || !password) {
+    return fail(res, 400, "Please complete all registration fields.");
   }
-});
 
-
-// LOGIN
-app.post("/api/login", async (req, res) => {
-  try {
-    const { email, password } = req.body;
-
-    if (!email || !password) {
-      return fail(res, 400, "Email and password are required.");
-    }
-
-    const normalizedEmail = email.trim().toLowerCase();
-
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email: normalizedEmail,
-      password
-    });
-
-    if (error) {
-      console.error("Supabase login error:", {
-        message: error.message,
-        code: error.code,
-        status: error.status
-      });
-
-      return fail(res, 401, "Authentication failed. Check server logs.");
-    }
-
-    if (!data?.user) {
-      return fail(res, 401, "Authentication failed.");
-    }
-
-    const profile = await getProfile(data.user.id);
-
-    if (!profile) {
-      return fail(res, 403, "Your profile was not found.");
-    }
-
-    if (!["student", "admin"].includes(profile.account_type)) {
-      return fail(res, 403, "Invalid account type.");
-    }
-
-    return res.json({
-      success: true,
-      user: {
-        id: data.user.id,
-        email: data.user.email,
-        fullName: profile.full_name,
-        institutionalId: profile.institutional_id,
-        accountType: profile.account_type
-      },
-      session: data.session
-    });
-
-  } catch (error) {
-    console.error("Login error:", error);
-    return fail(res, 500, "Login failed.");
+  if (fullName.length > 100 || institutionalId.length > 50) {
+    return fail(res, 400, "One or more fields are too long.");
   }
-});
 
+  if (password.length < 8) {
+    return fail(res, 400, "Password must be at least 8 characters.");
+  }
 
+  // The existing profiles schema uses institutional_id as an integer.
+  // Reject non-numeric values instead of silently storing invalid data.
+  if (!/^\d+$/.test(institutionalId)) {
+    return fail(res, 400, "Institutional ID must contain digits only.");
+  }
 
-/* STUDENT: UPDATE OWN PROFILE */
-app.patch("/api/profile/:userId", async (req, res) => {
-  try {
-    const userId = req.params.userId;
-    const { fullName, institutionalId } = req.body;
+  const numericId = Number(institutionalId);
+  if (!Number.isSafeInteger(numericId)) {
+    return fail(res, 400, "Institutional ID is invalid.");
+  }
 
-    if (!fullName?.trim() || !institutionalId?.trim()) {
-      return fail(res, 400, "Full name and institutional ID are required.");
+  const { data: existing, error: lookupError } = await supabase
+    .from("profiles")
+    .select("id")
+    .eq("institutional_id", numericId)
+    .maybeSingle();
+
+  if (lookupError) throw lookupError;
+  if (existing) return fail(res, 409, "That Institutional ID is already registered.");
+
+  const { data: created, error: createError } =
+    await supabase.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true
+    });
+
+  if (createError) {
+    const duplicate = /already|registered|exists/i.test(createError.message || "");
+    return fail(
+      res,
+      duplicate ? 409 : 400,
+      duplicate ? "That email is already registered." : "Could not create the account. Check the details and try again."
+    );
+  }
+
+  const { error: profileError } = await supabase
+    .from("profiles")
+    .insert({
+      id: created.user.id,
+      full_name: fullName,
+      institutional_id: numericId,
+      account_type: "student"
+    });
+
+  if (profileError) {
+    await supabase.auth.admin.deleteUser(created.user.id);
+    if (profileError.code === "23505") {
+      return fail(res, 409, "That Institutional ID is already registered.");
+    }
+    throw profileError;
+  }
+
+  res.status(201).json({
+    success: true,
+    message: "Registration successful. You can now log in."
+  });
+}));
+
+// -------------------- LOGIN --------------------
+
+app.post("/api/login", asyncRoute(async (req, res) => {
+  const email = clean(req.body.email).toLowerCase();
+  const password = String(req.body.password || "");
+
+  if (!email || !password) {
+    return fail(res, 400, "Enter your email and password.");
+  }
+
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email,
+    password
+  });
+
+  if (error || !data?.user || !data?.session) {
+    return fail(res, 401, "Incorrect email or password.");
+  }
+
+  const profile = await getProfile(data.user.id);
+
+  if (!profile || !["student", "admin"].includes(profile.account_type)) {
+    return fail(res, 403, "Your account profile is missing or invalid.");
+  }
+
+  res.json({
+    success: true,
+    user: {
+      id: profile.id,
+      email: data.user.email,
+      fullName: profile.full_name,
+      institutionalId: profile.institutional_id,
+      accountType: profile.account_type
+    },
+    session: {
+      access_token: data.session.access_token,
+      refresh_token: data.session.refresh_token,
+      expires_at: data.session.expires_at
+    }
+  });
+}));
+
+// -------------------- STUDENT PROFILE --------------------
+
+app.patch("/api/profile/:userId", authenticate, requireStudent,
+  asyncRoute(async (req, res) => {
+    if (req.params.userId !== req.authUser.id) {
+      return fail(res, 403, "You cannot edit another user's profile.");
     }
 
-    const name = fullName.trim();
-    const studentId = institutionalId.trim();
+    const fullName = clean(req.body.fullName);
+    const institutionalId = clean(req.body.institutionalId);
 
-    if (name.length > 100 || studentId.length > 50) {
-      return fail(res, 400, "Full name or institutional ID is too long.");
+    if (!fullName || !institutionalId) {
+      return fail(res, 400, "Full name and Institutional ID are required.");
     }
 
-    const profile = await getProfile(userId);
-
-    if (!profile) {
-      return fail(res, 404, "Profile not found.");
+    if (fullName.length > 100 || !/^\d+$/.test(institutionalId)) {
+      return fail(res, 400, "Enter a valid full name and numeric Institutional ID.");
     }
 
-    if (profile.account_type !== "student") {
-      return fail(res, 403, "Only student profiles can be edited here.");
+    const numericId = Number(institutionalId);
+    if (!Number.isSafeInteger(numericId)) {
+      return fail(res, 400, "Institutional ID is invalid.");
     }
 
-    // Check whether another profile already uses this institutional ID.
     const { data: duplicate, error: duplicateError } = await supabase
       .from("profiles")
       .select("id")
-      .eq("institutional_id", studentId)
-      .neq("id", userId)
-      .limit(1)
+      .eq("institutional_id", numericId)
+      .neq("id", req.authUser.id)
       .maybeSingle();
 
     if (duplicateError) throw duplicateError;
+    if (duplicate) return fail(res, 409, "That Institutional ID is already in use.");
 
-    if (duplicate) {
-      return fail(res, 409, "That institutional ID is already registered.");
-    }
-
-    const { data: updated, error: updateError } = await supabase
+    const { data, error } = await supabase
       .from("profiles")
       .update({
-        full_name: name,
-        institutional_id: studentId
+        full_name: fullName,
+        institutional_id: numericId
       })
-      .eq("id", userId)
-      .eq("account_type", "student")
+      .eq("id", req.authUser.id)
       .select("id, full_name, institutional_id, account_type")
-      .maybeSingle();
-
-    if (updateError) {
-      if (updateError.code === "23505") {
-        return fail(res, 409, "That institutional ID is already registered.");
-      }
-      throw updateError;
-    }
-
-    if (!updated) {
-      return fail(res, 404, "Profile could not be updated.");
-    }
-
-    return res.json({
-      success: true,
-      message: "Profile updated successfully.",
-      profile: {
-        fullName: updated.full_name,
-        institutionalId: updated.institutional_id,
-        accountType: updated.account_type
-      }
-    });
-  } catch (error) {
-    console.error("Profile update error:", error);
-    return fail(res, 500, "Unable to update profile.");
-  }
-});
-
-
-// PUBLIC LAPTOP LIST
-app.get("/api/laptops", async (req, res) => {
-  try {
-    const { data, error } = await supabase
-      .from("laptops")
-      .select("id, laptop_name, laptop_code, status")
-      .order("laptop_code");
+      .single();
 
     if (error) throw error;
 
     res.json({
       success: true,
-      laptops: (data || []).map(l => ({
-        id: l.id,
-        name: l.laptop_name,
-        code: l.laptop_code,
-        status: l.status
-      }))
+      user: {
+        id: data.id,
+        email: req.authUser.email,
+        fullName: data.full_name,
+        institutionalId: data.institutional_id,
+        accountType: data.account_type
+      }
     });
-  } catch (error) {
-    console.error("Laptop list error:", error);
-    fail(res, 500, "Unable to load laptops.");
-  }
-});
+  })
+);
 
-// STUDENT REQUESTS A LAPTOP
-app.post("/api/borrow", async (req, res) => {
-  try {
-    const { userId, laptopId } = req.body;
-    if (!userId || !laptopId) {
-      return fail(res, 400, "User ID and laptop ID are required.");
-    }
+// -------------------- LAPTOP INVENTORY (PUBLIC LIST) --------------------
 
-    const profile = await getProfile(userId);
-    if (!profile || profile.account_type !== "student") {
-      return fail(res, 403, "Only registered students can borrow laptops.");
-    }
+app.get("/api/laptops", asyncRoute(async (req, res) => {
+  const { data, error } = await supabase
+    .from("laptops")
+    .select("id, laptop_name, laptop_code, status")
+    .order("laptop_code", { ascending: true });
 
-    const { data: laptop, error: laptopError } = await supabase
-      .from("laptops")
-      .select("id, status")
-      .eq("id", laptopId)
-      .maybeSingle();
+  if (error) throw error;
 
-    if (laptopError) throw laptopError;
+  res.json({
+    success: true,
+    laptops: (data || []).map(item => ({
+      id: item.id,
+      name: item.laptop_name,
+      code: item.laptop_code,
+      status: item.status
+    }))
+  });
+}));
+
+// -------------------- STUDENT BORROWING --------------------
+
+app.post("/api/borrow", authenticate, requireStudent,
+  asyncRoute(async (req, res) => {
+    const laptopId = clean(req.body.laptopId);
+    if (!laptopId) return fail(res, 400, "Laptop ID is required.");
+
+    const laptop = await getLaptop(laptopId);
     if (!laptop) return fail(res, 404, "Laptop not found.");
     if (laptop.status !== "available") {
-      return fail(res, 409, "This laptop is not available.");
+      return fail(res, 409, "This laptop is not currently available.");
     }
 
     const { data: existing, error: existingError } = await supabase
       .from("borrowings")
-      .select("id")
-      .eq("user_id", userId)
+      .select("id, status")
+      .eq("user_id", req.authUser.id)
       .eq("laptop_id", laptopId)
       .in("status", ["pending", "borrowed"])
       .limit(1);
 
     if (existingError) throw existingError;
     if (existing?.length) {
-      return fail(res, 409, "You already have a pending request or active borrowing for this laptop.");
+      return fail(res, 409, "You already have a pending request or an active borrowing for this laptop.");
     }
 
-    const { error } = await supabase.from("borrowings").insert({
-      user_id: userId,
-      laptop_id: laptopId,
-      status: "pending",
-      borrowed_at: new Date().toISOString()
-    });
+    const { data, error } = await supabase
+      .from("borrowings")
+      .insert({
+        user_id: req.authUser.id,
+        laptop_id: laptopId,
+        status: "pending",
+        borrowed_at: new Date().toISOString()
+      })
+      .select("id")
+      .single();
 
-    if (error) throw error;
+    if (error) {
+      if (error.code === "23505") {
+        return fail(res, 409, "A request for this laptop already exists.");
+      }
+      throw error;
+    }
 
     res.status(201).json({
       success: true,
-      message: "Request submitted. Wait for admin approval."
+      message: "Borrowing request submitted. Wait for admin approval.",
+      borrowingId: data.id
     });
-  } catch (error) {
-    console.error("Borrow request error:", error);
-    fail(res, 500, "Unable to submit the borrowing request.");
-  }
-});
+  })
+);
 
+app.post("/api/cancel-request", authenticate, requireStudent,
+  asyncRoute(async (req, res) => {
+    const laptopId = clean(req.body.laptopId);
+    if (!laptopId) return fail(res, 400, "Laptop ID is required.");
 
-/* STUDENT CANCELS A PENDING REQUEST */
-app.post("/api/cancel-request", async (req, res) => {
-  try {
-    const { userId, laptopId } = req.body;
-
-    if (!userId || !laptopId) {
-      return fail(res, 400, "User ID and laptop ID are required.");
-    }
-
-    // Verify that this is a registered student.
-    const profile = await getProfile(userId);
-
-    if (!profile || profile.account_type !== "student") {
-      return fail(res, 403, "Only students can cancel requests.");
-    }
-
-    // Find the student's pending request for this laptop.
-    const { data: request, error: requestError } = await supabase
+    const { data: request, error: findError } = await supabase
       .from("borrowings")
       .select("id")
-      .eq("user_id", userId)
+      .eq("user_id", req.authUser.id)
       .eq("laptop_id", laptopId)
       .eq("status", "pending")
       .order("borrowed_at", { ascending: false })
       .limit(1)
       .maybeSingle();
 
-    if (requestError) throw requestError;
+    if (findError) throw findError;
+    if (!request) return fail(res, 404, "No pending request was found.");
 
-    if (!request) {
-      return fail(res, 404, "No pending request was found.");
-    }
-
-    // Cancel only if the request is still pending.
-    const { data: cancelled, error: cancelError } = await supabase
+    const { data, error } = await supabase
       .from("borrowings")
       .update({ status: "cancelled" })
       .eq("id", request.id)
-      .eq("user_id", userId)
+      .eq("user_id", req.authUser.id)
       .eq("status", "pending")
       .select("id")
       .maybeSingle();
 
-    if (cancelError) throw cancelError;
-
-    if (!cancelled) {
-      return fail(
-        res,
-        409,
-        "The request has already been processed."
-      );
-    }
-
-    return res.json({
-      success: true,
-      message: "Request cancelled successfully."
-    });
-  } catch (error) {
-  console.error("Cancel request error:", error);
-return fail(res, 500, "Unable to cancel the request.");
-}
-});
-
-
-// STUDENT HISTORY
-app.get("/api/borrowings/:userId", async (req, res) => {
-  try {
-    const profile = await getProfile(req.params.userId);
-    if (!profile) return fail(res, 404, "Profile not found.");
-
-    const { data: records, error } = await supabase
-      .from("borrowings")
-      .select("id, user_id, laptop_id, status, borrowed_at, returned_at")
-      .eq("user_id", req.params.userId)
-      .order("borrowed_at", { ascending: false });
-
     if (error) throw error;
+    if (!data) return fail(res, 409, "This request has already been processed.");
 
-    const laptopIds = [...new Set((records || []).map(r => r.laptop_id))];
-    let laptopMap = new Map();
+    res.json({ success: true, message: "Borrowing request cancelled." });
+  })
+);
 
-    if (laptopIds.length) {
-      const result = await supabase
-        .from("laptops")
-        .select("id, laptop_name, laptop_code")
-        .in("id", laptopIds);
-
-      if (result.error) throw result.error;
-      laptopMap = new Map((result.data || []).map(l => [l.id, l]));
+app.get("/api/borrowings/:userId", authenticate, requireStudent,
+  asyncRoute(async (req, res) => {
+    if (req.params.userId !== req.authUser.id) {
+      return fail(res, 403, "You cannot view another user's borrowing history.");
     }
 
-    const history = (records || []).map(r => {
-      const laptop = laptopMap.get(r.laptop_id);
+    const rows = await getBorrowingRows(req.authUser.id);
 
-      return {
-        id: r.id,
-        laptopId: r.laptop_id,
-        laptopName: laptop?.laptop_name || "Laptop removed",
-        laptopCode: laptop?.laptop_code || "—",
-        status: r.status,
-        requestedAt: r.borrowed_at,
-        borrowedAt: r.borrowed_at,
-        returnedAt: r.returned_at
-      };
+    res.json({
+      success: true,
+      borrowings: rows.map(row => ({
+        id: row.id,
+        userId: row.user_id,
+        laptopId: row.laptop_id,
+        laptopName: row.laptop?.laptop_name || "Deleted laptop",
+        laptopCode: row.laptop?.laptop_code || "N/A",
+        status: row.status,
+        requestedAt: row.borrowed_at,
+        borrowedAt: row.status === "borrowed" || row.status === "returned"
+          ? row.borrowed_at
+          : null,
+        returnedAt: row.returned_at
+      }))
     });
+  })
+);
 
-    res.json({ success: true, history });
-  } catch (error) {
-    console.error("History error:", error);
-    fail(res, 500, "Unable to load borrowing history.");
-  }
-});
+app.post("/api/return", authenticate, requireStudent,
+  asyncRoute(async (req, res) => {
+    const laptopId = clean(req.body.laptopId);
+    if (!laptopId) return fail(res, 400, "Laptop ID is required.");
 
-// STUDENT RETURNS A LAPTOP
-app.post("/api/return", async (req, res) => {
-  try {
-    const { userId, laptopId } = req.body;
-    if (!userId || !laptopId) {
-      return fail(res, 400, "User ID and laptop ID are required.");
-    }
-
-    const { data: record, error } = await supabase
+    const { data: borrowing, error: findError } = await supabase
       .from("borrowings")
       .select("id")
-      .eq("user_id", userId)
+      .eq("user_id", req.authUser.id)
       .eq("laptop_id", laptopId)
       .eq("status", "borrowed")
       .order("borrowed_at", { ascending: false })
       .limit(1)
       .maybeSingle();
 
-    if (error) throw error;
-    if (!record) return fail(res, 404, "No active borrowing found.");
+    if (findError) throw findError;
+    if (!borrowing) return fail(res, 404, "No active borrowing was found for this laptop.");
 
     const { data: updated, error: updateError } = await supabase
       .from("borrowings")
@@ -495,13 +475,13 @@ app.post("/api/return", async (req, res) => {
         status: "returned",
         returned_at: new Date().toISOString()
       })
-      .eq("id", record.id)
+      .eq("id", borrowing.id)
       .eq("status", "borrowed")
       .select("id")
       .maybeSingle();
 
     if (updateError) throw updateError;
-    if (!updated) return fail(res, 409, "This borrowing was already processed.");
+    if (!updated) return fail(res, 409, "This borrowing has already been processed.");
 
     const { error: laptopError } = await supabase
       .from("laptops")
@@ -509,195 +489,134 @@ app.post("/api/return", async (req, res) => {
       .eq("id", laptopId)
       .eq("status", "borrowed");
 
-    if (laptopError) throw laptopError;
+    if (laptopError) {
+      console.error("Laptop status update failed after return:", laptopError);
+      return fail(res, 500, "The return was recorded, but laptop availability could not be updated. Contact the administrator.");
+    }
 
-    res.json({ success: true, message: "Laptop returned successfully." });
-  } catch (error) {
-    console.error("Return error:", error);
-    fail(res, 500, "Unable to return laptop.");
-  }
-});
+    res.json({ success: true, message: "Laptop return recorded successfully." });
+  })
+);
 
-// ADMIN: VIEW INVENTORY
-app.get("/api/admin/laptops", async (req, res) => {
-  try {
-    if (!await requireAdmin(req.query.userId, res)) return;
+// -------------------- ADMIN: INVENTORY --------------------
 
+app.get("/api/admin/laptops", authenticate, requireAdmin,
+  asyncRoute(async (req, res) => {
     const { data, error } = await supabase
       .from("laptops")
       .select("id, laptop_name, laptop_code, status")
-      .order("laptop_code");
+      .order("laptop_code", { ascending: true });
 
     if (error) throw error;
-    res.json({ success: true, laptops: data || [] });
-  } catch (error) {
-    console.error("Admin inventory error:", error);
-    fail(res, 500, "Unable to load inventory.");
-  }
-});
 
-// ADMIN: ADD LAPTOP
-app.post("/api/admin/laptops", async (req, res) => {
-  try {
-    const { userId, laptopName, laptopCode } = req.body;
-    if (!await requireAdmin(userId, res)) return;
+    res.json({
+      success: true,
+      laptops: (data || []).map(item => ({
+        id: item.id,
+        name: item.laptop_name,
+        code: item.laptop_code,
+        status: item.status
+      }))
+    });
+  })
+);
 
-    if (!laptopName?.trim() || !laptopCode?.trim()) {
+app.post("/api/admin/laptops", authenticate, requireAdmin,
+  asyncRoute(async (req, res) => {
+    const laptopName = clean(req.body.laptopName);
+    const laptopCode = clean(req.body.laptopCode);
+
+    if (!laptopName || !laptopCode) {
       return fail(res, 400, "Laptop name and code are required.");
     }
 
     const { data, error } = await supabase
       .from("laptops")
       .insert({
-        laptop_name: laptopName.trim(),
-        laptop_code: laptopCode.trim(),
+        laptop_name: laptopName,
+        laptop_code: laptopCode,
         status: "available"
       })
-      .select()
+      .select("id, laptop_name, laptop_code, status")
       .single();
 
-    if (error) {
-      if (error.code === "23505") {
-        return fail(res, 409, "That laptop code already exists.");
-      }
-      throw error;
+    if (error?.code === "23505") {
+      return fail(res, 409, "That laptop code is already in use.");
     }
+    if (error) throw error;
 
     res.status(201).json({
       success: true,
       message: "Laptop added successfully.",
       laptop: data
     });
-  } catch (error) {
-    console.error("Add laptop error:", error);
-    fail(res, 500, "Unable to add laptop.");
-  }
-});
+  })
+);
 
-// ADMIN: EDIT LAPTOP NAME AND CODE
-app.patch("/api/admin/laptops/:id", async (req, res) => {
-  try {
-    const { userId, laptopName, laptopCode } = req.body;
+app.patch("/api/admin/laptops/:id", authenticate, requireAdmin,
+  asyncRoute(async (req, res) => {
+    const laptopName = clean(req.body.laptopName);
+    const laptopCode = clean(req.body.laptopCode);
 
-    // Verify admin access
-    if (!await requireAdmin(userId, res)) return;
-
-    // Validate input
-    if (!req.params.id || !laptopName?.trim() || !laptopCode?.trim()) {
-      return fail(
-        res,
-        400,
-        "Laptop ID, laptop name, and laptop code are required."
-      );
+    if (!laptopName || !laptopCode) {
+      return fail(res, 400, "Laptop name and code are required.");
     }
 
-    const cleanName = laptopName.trim();
-    const cleanCode = laptopCode.trim();
-
-    if (cleanName.length > 100) {
-      return fail(res, 400, "Laptop name must not exceed 100 characters.");
-    }
-
-    if (cleanCode.length > 50) {
-      return fail(res, 400, "Laptop code must not exceed 50 characters.");
-    }
-
-    // Check whether the laptop exists
-    const { data: existingLaptop, error: findError } = await supabase
-      .from("laptops")
-      .select("id")
-      .eq("id", req.params.id)
-      .maybeSingle();
-
-    if (findError) throw findError;
-
-    if (!existingLaptop) {
-      return fail(res, 404, "Laptop not found.");
-    }
-
-    // Update laptop name and code
-    const { data: updatedLaptop, error: updateError } = await supabase
+    const { data, error } = await supabase
       .from("laptops")
       .update({
-        laptop_name: cleanName,
-        laptop_code: cleanCode
+        laptop_name: laptopName,
+        laptop_code: laptopCode
       })
       .eq("id", req.params.id)
       .select("id, laptop_name, laptop_code, status")
-      .single();
-
-    if (updateError) {
-      if (updateError.code === "23505") {
-        return fail(
-          res,
-          409,
-          "That laptop code is already being used by another laptop."
-        );
-      }
-
-      throw updateError;
-    }
-
-    return res.json({
-      success: true,
-      message: "Laptop information updated successfully.",
-      laptop: updatedLaptop
-    });
-  } catch (error) {
-    console.error("Edit laptop error:", error);
-    return fail(res, 500, "Unable to update laptop information.");
-  }
-});
-
-// ADMIN: REMOVE LAPTOP
-app.delete("/api/admin/laptops/:id", async (req, res) => {
-  try {
-    if (!await requireAdmin(req.body.userId || req.query.userId, res)) return;
-
-    const { data: laptop, error } = await supabase
-      .from("laptops")
-      .select("id, status")
-      .eq("id", req.params.id)
       .maybeSingle();
 
-    if (error) throw error;
-    if (!laptop) return fail(res, 404, "Laptop not found.");
-    if (laptop.status === "borrowed") {
-      return fail(res, 409, "Cannot remove a currently borrowed laptop.");
+    if (error?.code === "23505") {
+      return fail(res, 409, "That laptop code is already in use.");
     }
+    if (error) throw error;
+    if (!data) return fail(res, 404, "Laptop not found.");
 
-    const { data: pending, error: pendingError } = await supabase
+    res.json({ success: true, message: "Laptop updated.", laptop: data });
+  })
+);
+
+app.delete("/api/admin/laptops/:id", authenticate, requireAdmin,
+  asyncRoute(async (req, res) => {
+    const laptopId = req.params.id;
+
+    const { data: active, error: activeError } = await supabase
       .from("borrowings")
       .select("id")
-      .eq("laptop_id", laptop.id)
-      .eq("status", "pending")
+      .eq("laptop_id", laptopId)
+      .in("status", ["pending", "borrowed"])
       .limit(1);
 
-    if (pendingError) throw pendingError;
-    if (pending?.length) {
-      return fail(res, 409, "This laptop has a pending request.");
+    if (activeError) throw activeError;
+    if (active?.length) {
+      return fail(res, 409, "Cannot remove a laptop with a pending request or active borrowing.");
     }
 
-    const { error: deleteError } = await supabase
+    const { error } = await supabase
       .from("laptops")
       .delete()
-      .eq("id", laptop.id);
+      .eq("id", laptopId);
 
-    if (deleteError) throw deleteError;
+    if (error?.code === "23503") {
+      return fail(res, 409, "This laptop has borrowing history and cannot be deleted. Edit its details or keep it in the inventory instead.");
+    }
+    if (error) throw error;
 
-    res.json({ success: true, message: "Laptop removed successfully." });
-  } catch (error) {
-    console.error("Remove laptop error:", error);
-    fail(res, 500, "Unable to remove laptop.");
-  }
-});
+    res.json({ success: true, message: "Laptop removed." });
+  })
+);
 
-// ADMIN: VIEW PENDING REQUESTS
-app.get("/api/admin/requests", async (req, res) => {
-  try {
-    if (!await requireAdmin(req.query.userId, res)) return;
+// -------------------- ADMIN: BORROW REQUESTS --------------------
 
-    const { data: requests, error } = await supabase
+app.get("/api/admin/requests", authenticate, requireAdmin,
+  asyncRoute(async (req, res) => {
+    const { data: rows, error } = await supabase
       .from("borrowings")
       .select("id, user_id, laptop_id, status, borrowed_at")
       .eq("status", "pending")
@@ -705,78 +624,73 @@ app.get("/api/admin/requests", async (req, res) => {
 
     if (error) throw error;
 
-    const userIds = [...new Set((requests || []).map(r => r.user_id))];
-    const laptopIds = [...new Set((requests || []).map(r => r.laptop_id))];
+    const userIds = [...new Set((rows || []).map(row => row.user_id))];
+    const laptopIds = [...new Set((rows || []).map(row => row.laptop_id))];
 
-    let profileMap = new Map();
-    let laptopMap = new Map();
+    const [profilesResult, laptopsResult] = await Promise.all([
+      userIds.length
+        ? supabase.from("profiles")
+            .select("id, full_name, institutional_id")
+            .in("id", userIds)
+        : Promise.resolve({ data: [], error: null }),
+      laptopIds.length
+        ? supabase.from("laptops")
+            .select("id, laptop_name, laptop_code, status")
+            .in("id", laptopIds)
+        : Promise.resolve({ data: [], error: null })
+    ]);
 
-    if (userIds.length) {
-      const result = await supabase
-        .from("profiles")
-        .select("id, full_name, institutional_id")
-        .in("id", userIds);
+    if (profilesResult.error) throw profilesResult.error;
+    if (laptopsResult.error) throw laptopsResult.error;
 
-      if (result.error) throw result.error;
-      profileMap = new Map((result.data || []).map(p => [p.id, p]));
-    }
+    const profileMap = new Map((profilesResult.data || []).map(item => [item.id, item]));
+    const laptopMap = new Map((laptopsResult.data || []).map(item => [item.id, item]));
 
-    if (laptopIds.length) {
-      const result = await supabase
-        .from("laptops")
-        .select("id, laptop_name, laptop_code")
-        .in("id", laptopIds);
+    res.json({
+      success: true,
+      requests: (rows || []).map(row => {
+        const profile = profileMap.get(row.user_id);
+        const laptop = laptopMap.get(row.laptop_id);
 
-      if (result.error) throw result.error;
-      laptopMap = new Map((result.data || []).map(l => [l.id, l]));
-    }
-
-    const formatted = (requests || []).map(r => {
-      const student = profileMap.get(r.user_id);
-      const laptop = laptopMap.get(r.laptop_id);
-
-      return {
-        id: r.id,
-        studentName: student?.full_name || "Unknown",
-        institutionalId: student?.institutional_id || "Unknown",
-        laptopName: laptop?.laptop_name || "Laptop removed",
-        laptopCode: laptop?.laptop_code || "—",
-        status: r.status,
-        requestedAt: r.borrowed_at
-      };
+        return {
+          id: row.id,
+          userId: row.user_id,
+          studentName: profile?.full_name || "Unknown student",
+          institutionalId: profile?.institutional_id ?? "N/A",
+          laptopId: row.laptop_id,
+          laptopName: laptop?.laptop_name || "Deleted laptop",
+          laptopCode: laptop?.laptop_code || "N/A",
+          laptopStatus: laptop?.status || "unknown",
+          requestedAt: row.borrowed_at,
+          status: row.status
+        };
+      })
     });
+  })
+);
 
-    res.json({ success: true, requests: formatted });
-  } catch (error) {
-    console.error("Request list error:", error);
-    fail(res, 500, "Unable to load borrow requests.");
-  }
-});
-
-// ADMIN: ACCEPT OR REJECT A REQUEST
-app.post("/api/admin/requests/:id", async (req, res) => {
-  try {
-    const { userId, decision } = req.body;
-    if (!await requireAdmin(userId, res)) return;
+app.post("/api/admin/requests/:id", authenticate, requireAdmin,
+  asyncRoute(async (req, res) => {
+    const decision = clean(req.body.decision).toLowerCase();
 
     if (!["accept", "reject"].includes(decision)) {
       return fail(res, 400, "Decision must be accept or reject.");
     }
 
-    const { data: request, error } = await supabase
+    const { data: request, error: findError } = await supabase
       .from("borrowings")
       .select("id, laptop_id, status")
       .eq("id", req.params.id)
       .maybeSingle();
 
-    if (error) throw error;
-    if (!request) return fail(res, 404, "Request not found.");
+    if (findError) throw findError;
+    if (!request) return fail(res, 404, "Borrowing request not found.");
     if (request.status !== "pending") {
       return fail(res, 409, "This request has already been processed.");
     }
 
     if (decision === "reject") {
-      const { data: rejected, error: rejectError } = await supabase
+      const { data, error } = await supabase
         .from("borrowings")
         .update({ status: "rejected" })
         .eq("id", request.id)
@@ -784,17 +698,14 @@ app.post("/api/admin/requests/:id", async (req, res) => {
         .select("id")
         .maybeSingle();
 
-      if (rejectError) throw rejectError;
-      if (!rejected) return fail(res, 409, "Request already processed.");
+      if (error) throw error;
+      if (!data) return fail(res, 409, "This request has already been processed.");
 
-      return res.json({
-        success: true,
-        message: "Borrow request rejected."
-      });
+      return res.json({ success: true, message: "Request rejected." });
     }
 
-    // Reserve the laptop only if it is still available.
-    const { data: reserved, error: reserveError } = await supabase
+    // Only approve if the laptop is still available.
+    const { data: laptop, error: laptopError } = await supabase
       .from("laptops")
       .update({ status: "borrowed" })
       .eq("id", request.laptop_id)
@@ -802,12 +713,12 @@ app.post("/api/admin/requests/:id", async (req, res) => {
       .select("id")
       .maybeSingle();
 
-    if (reserveError) throw reserveError;
-    if (!reserved) {
-      return fail(res, 409, "Laptop is no longer available.");
+    if (laptopError) throw laptopError;
+    if (!laptop) {
+      return fail(res, 409, "This laptop is no longer available. Refresh the requests.");
     }
 
-    const { data: accepted, error: acceptError } = await supabase
+    const { data: updatedRequest, error: requestError } = await supabase
       .from("borrowings")
       .update({ status: "borrowed" })
       .eq("id", request.id)
@@ -815,35 +726,30 @@ app.post("/api/admin/requests/:id", async (req, res) => {
       .select("id")
       .maybeSingle();
 
-    if (acceptError || !accepted) {
-      await supabase.from("laptops")
+    if (requestError || !updatedRequest) {
+      // Best-effort rollback if the request update fails.
+      await supabase
+        .from("laptops")
         .update({ status: "available" })
         .eq("id", request.laptop_id)
         .eq("status", "borrowed");
 
-      if (acceptError) throw acceptError;
-      return fail(res, 409, "Request was already processed.");
+      if (requestError) throw requestError;
+      return fail(res, 409, "The request changed before it could be approved.");
     }
 
-    res.json({
-      success: true,
-      message: "Request accepted. Laptop is now marked as borrowed."
-    });
-  } catch (error) {
-    console.error("Decision error:", error);
-    fail(res, 500, "Unable to process the request.");
-  }
-});
+    res.json({ success: true, message: "Request approved. The laptop is now marked as borrowed." });
+  })
+);
 
-// ADMIN: USERS
-app.get("/api/admin/users", async (req, res) => {
-  try {
-    if (!await requireAdmin(req.query.userId, res)) return;
+// -------------------- ADMIN: USERS --------------------
 
+app.get("/api/admin/users", authenticate, requireAdmin,
+  asyncRoute(async (req, res) => {
     const { data: profiles, error } = await supabase
       .from("profiles")
       .select("id, full_name, institutional_id, account_type")
-      .order("full_name");
+      .order("full_name", { ascending: true });
 
     if (error) throw error;
 
@@ -853,204 +759,137 @@ app.get("/api/admin/users", async (req, res) => {
     if (authError) throw authError;
 
     const emailMap = new Map(
-      (authData.users || []).map(u => [u.id, u.email])
+      (authData.users || []).map(user => [user.id, user.email || "N/A"])
     );
 
-    const users = (profiles || []).map(p => ({
-      fullName: p.full_name,
-      institutionalId: p.institutional_id,
-      accountType: p.account_type,
-      email: emailMap.get(p.id) || "—"
-    }));
+    res.json({
+      success: true,
+      users: (profiles || []).map(profile => ({
+        id: profile.id,
+        fullName: profile.full_name,
+        institutionalId: profile.institutional_id,
+        accountType: profile.account_type,
+        email: emailMap.get(profile.id) || "N/A"
+      }))
+    });
+  })
+);
 
-    res.json({ success: true, users });
-  } catch (error) {
-    console.error("Users error:", error);
-    fail(res, 500, "Unable to load users.");
-  }
-});
+// -------------------- ADMIN: BORROWING LOGS --------------------
 
-// ADMIN: BORROWING LOGS
-app.get("/api/admin/logs", async (req, res) => {
-  try {
-    if (!await requireAdmin(req.query.userId, res)) return;
-
-    const { data: records, error } = await supabase
+app.get("/api/admin/logs", authenticate, requireAdmin,
+  asyncRoute(async (req, res) => {
+    const { data: rows, error } = await supabase
       .from("borrowings")
       .select("id, user_id, laptop_id, status, borrowed_at, returned_at")
       .order("borrowed_at", { ascending: false });
 
     if (error) throw error;
 
-    const userIds = [...new Set((records || []).map(r => r.user_id))];
-    const laptopIds = [...new Set((records || []).map(r => r.laptop_id))];
+    const userIds = [...new Set((rows || []).map(row => row.user_id))];
+    const laptopIds = [...new Set((rows || []).map(row => row.laptop_id))];
 
-    let profileMap = new Map();
-    let laptopMap = new Map();
+    const [profilesResult, laptopsResult] = await Promise.all([
+      userIds.length
+        ? supabase.from("profiles")
+            .select("id, full_name, institutional_id")
+            .in("id", userIds)
+        : Promise.resolve({ data: [], error: null }),
+      laptopIds.length
+        ? supabase.from("laptops")
+            .select("id, laptop_name, laptop_code")
+            .in("id", laptopIds)
+        : Promise.resolve({ data: [], error: null })
+    ]);
 
-    if (userIds.length) {
-      const result = await supabase
-        .from("profiles")
-        .select("id, full_name, institutional_id")
-        .in("id", userIds);
+    if (profilesResult.error) throw profilesResult.error;
+    if (laptopsResult.error) throw laptopsResult.error;
 
-      if (result.error) throw result.error;
-      profileMap = new Map((result.data || []).map(p => [p.id, p]));
-    }
-
-    if (laptopIds.length) {
-      const result = await supabase
-        .from("laptops")
-        .select("id, laptop_name, laptop_code")
-        .in("id", laptopIds);
-
-      if (result.error) throw result.error;
-      laptopMap = new Map((result.data || []).map(l => [l.id, l]));
-    }
-
-    const logs = (records || []).map(r => {
-      const p = profileMap.get(r.user_id);
-      const l = laptopMap.get(r.laptop_id);
-
-      return {
-        student: {
-          name: p?.full_name || "Unknown",
-          institutionalId: p?.institutional_id || "Unknown"
-        },
-        laptop: {
-          name: l?.laptop_name || "Laptop removed",
-          code: l?.laptop_code || "—"
-        },
-        status: r.status,
-        borrowedAt: r.borrowed_at,
-        returnedAt: r.returned_at
-      };
-    });
-
-    res.json({ success: true, logs });
-  } catch (error) {
-    console.error("Logs error:", error);
-    fail(res, 500, "Unable to load borrowing logs.");
-  }
-});
-
-
-/* ADMIN: RECENT ACTIVITY */
-app.get("/api/admin/activity", async (req, res) => {
-  try {
-    if (!await requireAdmin(req.query.userId, res)) return;
-
-    const { data: records, error } = await supabase
-      .from("borrowings")
-      .select("id, user_id, laptop_id, status, borrowed_at, returned_at")
-      .order("borrowed_at", { ascending: false })
-      .limit(50);
-
-    if (error) throw error;
-
-    const userIds = [...new Set((records || []).map(r => r.user_id))];
-    const laptopIds = [...new Set((records || []).map(r => r.laptop_id))];
-
-    let profileMap = new Map();
-    let laptopMap = new Map();
-
-    if (userIds.length) {
-      const result = await supabase
-        .from("profiles")
-        .select("id, full_name")
-        .in("id", userIds);
-
-      if (result.error) throw result.error;
-      profileMap = new Map(
-        (result.data || []).map(p => [p.id, p])
-      );
-    }
-
-    if (laptopIds.length) {
-      const result = await supabase
-        .from("laptops")
-        .select("id, laptop_name, laptop_code")
-        .in("id", laptopIds);
-
-      if (result.error) throw result.error;
-      laptopMap = new Map(
-        (result.data || []).map(l => [l.id, l])
-      );
-    }
-
-    const activities = [];
-
-    for (const record of records || []) {
-      const student = profileMap.get(record.user_id);
-      const laptop = laptopMap.get(record.laptop_id);
-
-      const base = {
-        studentName: student?.full_name || "Unknown student",
-        laptopCode: laptop?.laptop_code || "Laptop",
-        laptopName: laptop?.laptop_name || "Laptop removed"
-      };
-
-      if (record.status === "pending") {
-        activities.push({
-          ...base,
-          type: "request",
-          message: "requested to borrow",
-          timestamp: record.borrowed_at
-        });
-      }
-
-      if (record.status === "cancelled") {
-        activities.push({
-          ...base,
-          type: "cancel",
-          message: "cancelled a borrowing request for",
-          timestamp: record.borrowed_at
-        });
-      }
-
-      if (record.status === "borrowed") {
-        activities.push({
-          ...base,
-          type: "approval",
-          message: "had a borrowing request approved for",
-          timestamp: record.borrowed_at
-        });
-      }
-
-      if (record.status === "returned") {
-        activities.push({
-          ...base,
-          type: "return",
-          message: "returned",
-          timestamp: record.returned_at || record.borrowed_at
-        });
-      }
-
-      if (record.status === "rejected") {
-        activities.push({
-          ...base,
-          type: "cancel",
-          message: "had a borrowing request rejected for",
-          timestamp: record.borrowed_at
-        });
-      }
-    }
-
-    activities.sort(
-      (a, b) => new Date(b.timestamp) - new Date(a.timestamp)
-    );
+    const profileMap = new Map((profilesResult.data || []).map(item => [item.id, item]));
+    const laptopMap = new Map((laptopsResult.data || []).map(item => [item.id, item]));
 
     res.json({
       success: true,
-      activities: activities.slice(0, 10)
+      logs: (rows || []).map(row => {
+        const profile = profileMap.get(row.user_id);
+        const laptop = laptopMap.get(row.laptop_id);
+
+        return {
+          id: row.id,
+          studentName: profile?.full_name || "Unknown student",
+          institutionalId: profile?.institutional_id ?? "N/A",
+          laptopName: laptop?.laptop_name || "Deleted laptop",
+          laptopCode: laptop?.laptop_code || "N/A",
+          requestedAt: row.borrowed_at,
+          returnedAt: row.returned_at,
+          status: row.status
+        };
+      })
     });
-  } catch (error) {
-    console.error("Recent activity error:", error);
-    fail(res, 500, "Unable to load recent activity.");
-  }
+  })
+);
+
+// -------------------- ADMIN: RECENT ACTIVITY --------------------
+
+app.get("/api/admin/activity", authenticate, requireAdmin,
+  asyncRoute(async (req, res) => {
+    const { data: rows, error } = await supabase
+      .from("borrowings")
+      .select("id, user_id, laptop_id, status, borrowed_at, returned_at")
+      .order("borrowed_at", { ascending: false })
+      .limit(20);
+
+    if (error) throw error;
+
+    const userIds = [...new Set((rows || []).map(row => row.user_id))];
+    const laptopIds = [...new Set((rows || []).map(row => row.laptop_id))];
+
+    const [profilesResult, laptopsResult] = await Promise.all([
+      userIds.length
+        ? supabase.from("profiles")
+            .select("id, full_name")
+            .in("id", userIds)
+        : Promise.resolve({ data: [], error: null }),
+      laptopIds.length
+        ? supabase.from("laptops")
+            .select("id, laptop_name, laptop_code")
+            .in("id", laptopIds)
+        : Promise.resolve({ data: [], error: null })
+    ]);
+
+    if (profilesResult.error) throw profilesResult.error;
+    if (laptopsResult.error) throw laptopsResult.error;
+
+    const profileMap = new Map((profilesResult.data || []).map(item => [item.id, item]));
+    const laptopMap = new Map((laptopsResult.data || []).map(item => [item.id, item]));
+
+    res.json({
+      success: true,
+      activities: (rows || []).map(row => ({
+        id: row.id,
+        studentName: profileMap.get(row.user_id)?.full_name || "Unknown student",
+        laptopName: laptopMap.get(row.laptop_id)?.laptop_name || "Deleted laptop",
+        laptopCode: laptopMap.get(row.laptop_id)?.laptop_code || "N/A",
+        status: row.status,
+        date: row.returned_at || row.borrowed_at
+      }))
+    });
+  })
+);
+
+// -------------------- ERROR HANDLER --------------------
+
+app.use((err, req, res, next) => {
+  console.error("API error:", err.message || err);
+
+  if (res.headersSent) return next(err);
+
+  res.status(500).json({
+    success: false,
+    message: "An unexpected server error occurred. Please try again."
+  });
 });
 
-
 app.listen(PORT, () => {
-  console.log(`Backend running at http://localhost:${PORT}`);
+  console.log(`CPE Laptop Borrowing Backend running on port ${PORT}`);
 });

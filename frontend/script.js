@@ -1,44 +1,112 @@
-const API_BASE_URL = "http://localhost:3000";
+
+/*
+  CPE Laptop Borrowing System
+  Frontend JavaScript
+
+  Local development:
+    http://localhost:3000
+
+  Vercel deployment:
+    Set window.API_BASE_URL before this script loads,
+    or replace the fallback below with your deployed backend URL.
+*/
+
+const API_BASE_URL = (
+  window.API_BASE_URL || "http://localhost:3000"
+).replace(/\/+$/, "");
+
+const USER_STORAGE_KEY = "cpeBorrowingUser";
+const SESSION_STORAGE_KEY = "cpeBorrowingSession";
 
 let currentUser = null;
+let currentSession = null;
 let laptopList = [];
 let studentBorrowings = [];
+let currentPage = "";
 
-const $ = id => document.getElementById(id);
+// -------------------- STORAGE AND API HELPERS --------------------
+
+function readStoredJSON(key) {
+  try {
+    return JSON.parse(sessionStorage.getItem(key) || "null");
+  } catch {
+    return null;
+  }
+}
+
+function saveSession(user, session) {
+  currentUser = user;
+  currentSession = session;
+
+  sessionStorage.setItem(USER_STORAGE_KEY, JSON.stringify(user));
+  sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
+}
+
+function clearSession() {
+  currentUser = null;
+  currentSession = null;
+  studentBorrowings = [];
+
+  sessionStorage.removeItem(USER_STORAGE_KEY);
+  sessionStorage.removeItem(SESSION_STORAGE_KEY);
+}
 
 async function api(path, options = {}) {
+  const headers = {
+    ...(options.body !== undefined ? { "Content-Type": "application/json" } : {}),
+    ...(options.headers || {})
+  };
+
+  if (currentSession?.access_token) {
+    headers.Authorization = `Bearer ${currentSession.access_token}`;
+  }
+
   let response;
 
   try {
-    response = await fetch(API_BASE_URL + path, {
-      method: options.method || "GET",
-      headers: { "Content-Type": "application/json" },
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      ...options,
+      headers,
       body: options.body === undefined
         ? undefined
-        : JSON.stringify(options.body)
+        : typeof options.body === "string"
+          ? options.body
+          : JSON.stringify(options.body)
     });
   } catch {
-    throw new Error("Cannot connect to the backend. Run node server.js first.");
+    throw new Error(
+      `Cannot connect to the backend at ${API_BASE_URL}. Check that the backend is running and that the API URL is correct.`
+    );
   }
 
   let data = {};
+
   try {
     data = await response.json();
-  } catch {}
+  } catch {
+    // Handles non-JSON responses from hosting platforms.
+  }
 
   if (!response.ok || data.success === false) {
-    throw new Error(data.message || `Request failed: ${response.status}`);
+    if (response.status === 401 && currentUser) {
+      clearSession();
+      authPage("login");
+    }
+
+    throw new Error(data.message || `Request failed (${response.status}).`);
   }
 
   return data;
 }
 
-function setMessage(id, text, type = "") {
-  const element = $(id);
+function setMessage(elementId, message, type = "") {
+  const element = document.getElementById(elementId);
   if (!element) return;
 
-  element.textContent = text || "";
-  element.className = `feedback ${type}`.trim();
+  element.textContent = message || "";
+  element.classList.remove("error", "success");
+
+  if (type) element.classList.add(type);
 }
 
 function escapeHTML(value) {
@@ -55,107 +123,101 @@ function formatDate(value) {
   if (!value) return "—";
 
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString();
+  if (Number.isNaN(date.getTime())) return "—";
+
+  return date.toLocaleString([], {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
 }
 
-function badge(status) {
-  const clean = String(status || "unknown").toLowerCase();
-  return `<span class="status ${escapeHTML(clean)}">${escapeHTML(clean)}</span>`;
+function statusBadge(status) {
+  const safeStatus = String(status || "unknown").toLowerCase();
+  return `<span class="status ${escapeHTML(safeStatus)}">${escapeHTML(safeStatus)}</span>`;
 }
+
+function emptyRow(columns, message = "No records to display.") {
+  return `<tr><td colspan="${columns}">${escapeHTML(message)}</td></tr>`;
+}
+
+function userId() {
+  return currentUser?.id || "";
+}
+
+// -------------------- AUTHENTICATION PAGES --------------------
 
 function authPage(page) {
-  $("loginPage").classList.toggle("hidden", page !== "login");
-  $("registerPage").classList.toggle("hidden", page !== "register");
-  $("appShell").classList.add("hidden");
+  document.getElementById("appShell")?.classList.add("hidden");
+  document.getElementById("loginPage")?.classList.toggle("hidden", page !== "login");
+  document.getElementById("registerPage")?.classList.toggle("hidden", page !== "register");
+
+  if (page === "login") {
+    setMessage("loginMessage", "");
+  } else {
+    setMessage("registerMessage", "");
+  }
 }
 
 function logout() {
-  currentUser = null;
-  sessionStorage.removeItem("cpeBorrowingUser");
+  clearSession();
+  laptopList = [];
+  studentBorrowings = [];
+  currentPage = "";
+
+  document.querySelectorAll(".sidebar-menu button").forEach(button => {
+    button.classList.remove("active");
+  });
 
   authPage("login");
-  $("loginForm").reset();
-  setMessage("loginMessage", "");
-}
-
-function enterApp() {
-  $("loginPage").classList.add("hidden");
-  $("registerPage").classList.add("hidden");
-  $("appShell").classList.remove("hidden");
-
-  const isAdmin = currentUser.accountType === "admin";
-
-  $("adminMenu").classList.toggle("hidden", !isAdmin);
-  $("studentMenu").classList.toggle("hidden", isAdmin);
-
-  $("headerUser").textContent = currentUser.fullName || currentUser.email;
-  $("welcomeName").textContent = currentUser.fullName || "Student";
-
-  $("profileName").textContent = currentUser.fullName || "";
-  $("profileID").textContent = currentUser.institutionalId || "";
-  $("profileEmail").textContent = currentUser.email || "";
-  $("profileType").textContent = currentUser.accountType || "";
-
-  showPage(isAdmin ? "adminDashboard" : "studentDashboard");
-}
-
-function showPage(pageId) {
-  document.querySelectorAll(".page").forEach(page => {
-    page.classList.toggle("active", page.id === pageId);
-  });
-
-  document.querySelectorAll(".sidebar-menu button[data-page]").forEach(button => {
-    button.classList.toggle("active", button.dataset.page === pageId);
-  });
-
-  const page = $(pageId);
-  const title = page?.querySelector(".page-title h1, .welcome-box h2, h2");
-
-  $("headerTitle").textContent = title?.textContent || "Dashboard";
-
-  if (!currentUser) return;
-
-  if (pageId === "studentDashboard") loadStudentLaptops();
-  if (pageId === "studentHistory") loadHistory();
-  if (pageId === "adminDashboard") loadAdminDashboard();
-  if (pageId === "borrowRequests") loadRequests();
-  if (pageId === "manageLaptops") loadInventory();
-  if (pageId === "registeredUsers") loadUsers();
-  if (pageId === "borrowingLogs") loadLogs();
+  setMessage("loginMessage", "You have been logged out.", "success");
 }
 
 async function login(event) {
   event.preventDefault();
-  setMessage("loginMessage", "Signing in...");
+  setMessage("loginMessage", "");
+
+  const email = document.getElementById("loginEmail").value.trim();
+  const password = document.getElementById("loginPassword").value;
+  const button = event.submitter || document.querySelector("#loginForm button[type='submit']");
+
+  if (button) button.disabled = true;
 
   try {
     const result = await api("/api/login", {
       method: "POST",
-      body: {
-        email: $("loginEmail").value.trim(),
-        password: $("loginPassword").value
-      }
+      body: { email, password }
     });
 
-    currentUser = result.user;
+    if (!result.user || !result.session?.access_token) {
+      throw new Error("The server did not return a valid login session.");
+    }
 
-    sessionStorage.setItem("cpeBorrowingUser", JSON.stringify(currentUser));
-    setMessage("loginMessage", "");
-    enterApp();
+    saveSession(result.user, result.session);
+    document.getElementById("loginForm").reset();
+
+    await enterApp();
   } catch (error) {
     setMessage("loginMessage", error.message, "error");
+  } finally {
+    if (button) button.disabled = false;
   }
 }
 
 async function register(event) {
   event.preventDefault();
+  setMessage("registerMessage", "");
 
-  const fullName = $("registerName").value.trim();
-  const institutionalId = $("registerID").value.trim();
-  const email = $("registerEmail").value.trim().toLowerCase();
-  const password = $("registerPassword").value;
+  const fullName = document.getElementById("registerName").value.trim();
+  const institutionalId = document.getElementById("registerID").value.trim();
+  const email = document.getElementById("registerEmail").value.trim();
+  const password = document.getElementById("registerPassword").value;
+  const confirmPassword = document.getElementById("confirmPassword").value;
+  const button = event.submitter || document.querySelector("#registerForm button[type='submit']");
 
-  if (password !== $("confirmPassword").value) {
+  if (password !== confirmPassword) {
     setMessage("registerMessage", "Passwords do not match.", "error");
     return;
   }
@@ -165,7 +227,12 @@ async function register(event) {
     return;
   }
 
-  setMessage("registerMessage", "Creating account...");
+  if (!/^\d+$/.test(institutionalId)) {
+    setMessage("registerMessage", "Institutional ID must contain digits only.", "error");
+    return;
+  }
+
+  if (button) button.disabled = true;
 
   try {
     const result = await api("/api/register", {
@@ -173,796 +240,761 @@ async function register(event) {
       body: { fullName, institutionalId, email, password }
     });
 
-    $("registerForm").reset();
-    setMessage(
-      "registerMessage",
-      result.message || "Registration successful. You can now log in.",
-      "success"
-    );
+    document.getElementById("registerForm").reset();
+    authPage("login");
+    setMessage("loginMessage", result.message || "Registration successful. You can now log in.", "success");
   } catch (error) {
     setMessage("registerMessage", error.message, "error");
+  } finally {
+    if (button) button.disabled = false;
   }
 }
 
+// -------------------- ENTERING AND NAVIGATING THE APP --------------------
 
+async function enterApp() {
+  if (!currentUser || !currentSession?.access_token) {
+    clearSession();
+    authPage("login");
+    return;
+  }
+
+  document.getElementById("loginPage").classList.add("hidden");
+  document.getElementById("registerPage").classList.add("hidden");
+  document.getElementById("appShell").classList.remove("hidden");
+
+  const isAdmin = currentUser.accountType === "admin";
+
+  document.getElementById("studentMenu").classList.toggle("hidden", isAdmin);
+  document.getElementById("adminMenu").classList.toggle("hidden", !isAdmin);
+
+  const name = currentUser.fullName || "User";
+  document.getElementById("headerUser").textContent = name;
+  document.getElementById("welcomeName").textContent = name;
+
+  renderProfile();
+
+  await showPage(isAdmin ? "adminDashboard" : "studentDashboard");
+}
+
+async function showPage(pageId) {
+  const isAdmin = currentUser?.accountType === "admin";
+  const adminPages = [
+    "adminDashboard",
+    "borrowRequests",
+    "manageLaptops",
+    "registeredUsers",
+    "borrowingLogs"
+  ];
+  const studentPages = [
+    "studentDashboard",
+    "studentHistory",
+    "studentProfile"
+  ];
+
+  if (isAdmin && !adminPages.includes(pageId)) pageId = "adminDashboard";
+  if (!isAdmin && !studentPages.includes(pageId)) pageId = "studentDashboard";
+
+  currentPage = pageId;
+
+  document.querySelectorAll(".page").forEach(page => {
+    page.classList.toggle("active", page.id === pageId);
+  });
+
+  document.querySelectorAll(".sidebar-menu button[data-page]").forEach(button => {
+    button.classList.toggle("active", button.dataset.page === pageId);
+  });
+
+  const pageTitles = {
+    studentDashboard: "Dashboard",
+    studentHistory: "My History",
+    studentProfile: "My Profile",
+    adminDashboard: "Admin Dashboard",
+    borrowRequests: "Borrow Requests",
+    manageLaptops: "Manage Laptops",
+    registeredUsers: "Registered Users",
+    borrowingLogs: "Borrowing Logs"
+  };
+
+  document.getElementById("headerTitle").textContent = pageTitles[pageId] || "Dashboard";
+
+  try {
+    if (pageId === "studentDashboard") await loadStudentLaptops();
+    if (pageId === "studentHistory") await loadHistory();
+    if (pageId === "studentProfile") renderProfile();
+    if (pageId === "adminDashboard") await loadAdminDashboard();
+    if (pageId === "borrowRequests") await loadRequests();
+    if (pageId === "manageLaptops") await loadInventory();
+    if (pageId === "registeredUsers") await loadUsers();
+    if (pageId === "borrowingLogs") await loadLogs();
+  } catch (error) {
+    const target = {
+      studentDashboard: "laptopMessage",
+      studentHistory: "historyMessage",
+      adminDashboard: "recentActivityList",
+      borrowRequests: "requestsMessage",
+      manageLaptops: "inventoryMessage",
+      registeredUsers: "usersMessage",
+      borrowingLogs: "logsMessage"
+    }[pageId];
+
+    if (target === "recentActivityList") {
+      document.getElementById(target).innerHTML =
+        `<p class="activity-empty">${escapeHTML(error.message)}</p>`;
+    } else if (target) {
+      setMessage(target, error.message, "error");
+    }
+  }
+}
+
+// -------------------- STUDENT LAPTOPS --------------------
 
 async function loadStudentLaptops() {
-  try {
-    const [laptopResult, borrowingResult] = await Promise.all([
-      api("/api/laptops"),
-      api(`/api/borrowings/${encodeURIComponent(currentUser.id)}`)
-    ]);
+  setMessage("laptopMessage", "");
 
-    laptopList = laptopResult.laptops || [];
-    studentBorrowings = borrowingResult.history || [];
+  const [laptopResult, borrowingResult] = await Promise.all([
+    api("/api/laptops"),
+    api(`/api/borrowings/${encodeURIComponent(userId())}`)
+  ]);
 
-    renderLaptops();
-  } catch (error) {
-    setMessage("laptopMessage", error.message, "error");
-  }
+  laptopList = laptopResult.laptops || [];
+  studentBorrowings = borrowingResult.borrowings || [];
+
+  renderLaptops();
 }
 
-
-
+function getStudentLaptopBorrowing(laptopId) {
+  return studentBorrowings.find(item =>
+    item.laptopId === laptopId &&
+    ["pending", "borrowed"].includes(String(item.status).toLowerCase())
+  );
+}
 
 
 function renderLaptops() {
-  const search = $("laptopSearch").value.trim().toLowerCase();
-  const grid = $("laptopGrid");
+  const grid = document.getElementById("laptopGrid");
+  const searchInput = document.getElementById("laptopSearch");
+  const search = searchInput ? searchInput.value.trim().toLowerCase() : "";
 
   const filtered = laptopList.filter(laptop =>
-    `${laptop.code} ${laptop.name}`.toLowerCase().includes(search)
+    `${laptop.name} ${laptop.code} ${laptop.status}`
+      .toLowerCase()
+      .includes(search)
   );
 
-  grid.replaceChildren();
-
   if (!filtered.length) {
-    grid.textContent = "No matching laptops found.";
+    grid.innerHTML = `<p class="activity-empty">No laptops match your search.</p>`;
     return;
   }
 
-  filtered.forEach(laptop => {
-    const card = document.createElement("article");
-    card.className = "laptop-card";
+  // Default laptop photo from Unsplash
+  const laptopPhoto =
+    "https://images.unsplash.com/photo-1496181133206-80ce9b88a853?auto=format&fit=crop&w=800&q=80";
 
-    const image = document.createElement("img");
-    image.className = "laptop-image";
-    image.src =
-      "https://images.unsplash.com/photo-1496181133206-80ce9b88a853?auto=format&fit=crop&w=700&q=80";
-    image.alt = "Laptop";
-    image.loading = "lazy";
+  grid.innerHTML = filtered.map(laptop => {
+    const status = String(laptop.status || "unknown").toLowerCase();
+    const borrowing = getStudentLaptopBorrowing(laptop.id);
+    let button = "";
 
-    const title = document.createElement("h3");
-    title.textContent = `${laptop.code} — ${laptop.name}`;
-
-    // Find this student's latest active request for this laptop.
-    const ownRecord = studentBorrowings.find(record =>
-      record.laptopId === laptop.id &&
-      ["pending", "borrowed"].includes(record.status)
-    );
-
-    const status = document.createElement("p");
-    let buttonLabel = "";
-    let action = null;
-    let disabled = false;
-
-    if (ownRecord?.status === "pending") {
-      status.innerHTML = badge("pending");
-
-      buttonLabel = "Cancel Request";
-      action = button => cancelRequest(laptop.id, button);
-    } else if (ownRecord?.status === "borrowed") {
-      status.innerHTML = badge("borrowed");
-
-      buttonLabel = "Return Laptop";
-      action = button => returnLaptop(laptop.id, button);
-    } else if (laptop.status === "available") {
-      status.innerHTML = badge("available");
-
-      buttonLabel = "Request Laptop";
-      action = button => requestLaptop(laptop.id, button);
+    if (borrowing?.status === "pending") {
+      button = `
+        <button class="reject-btn" type="button"
+          data-action="cancel-request"
+          data-laptop-id="${escapeHTML(laptop.id)}">
+          Cancel Request
+        </button>`;
+    } else if (borrowing?.status === "borrowed") {
+      button = `
+        <button class="return-btn" type="button"
+          data-action="return-laptop"
+          data-laptop-id="${escapeHTML(laptop.id)}">
+          Return Laptop
+        </button>`;
+    } else if (status === "available") {
+      button = `
+        <button class="request-btn" type="button"
+          data-action="request-laptop"
+          data-laptop-id="${escapeHTML(laptop.id)}">
+          Request to Borrow
+        </button>`;
     } else {
-      status.innerHTML = badge(laptop.status);
-      buttonLabel = "Unavailable";
-      disabled = true;
+      button = `
+        <button class="requested-btn" type="button" disabled>
+          Unavailable
+        </button>`;
     }
 
-    const button = document.createElement("button");
+    return `
+      <article class="laptop-card">
+        <img
+          class="laptop-image"
+          src="${laptopPhoto}"
+          alt="${escapeHTML(laptop.name)} laptop"
+          loading="lazy"
+          onerror="
+            const fallback = document.createElement('div');
+            fallback.className = 'laptop-image';
+            fallback.setAttribute('role', 'img');
+            fallback.setAttribute('aria-label', 'Laptop image unavailable');
+            fallback.innerHTML = '<i class=&quot;fas fa-laptop&quot; aria-hidden=&quot;true&quot;></i>';
+            this.replaceWith(fallback);
+          "
+        >
 
-if (buttonLabel === "Request Laptop") {
-  button.className = "request-btn";
-} else if (buttonLabel === "Cancel Request") {
-  button.className = "reject-btn";
-} else if (buttonLabel === "Return Laptop") {
-  button.className = "return-btn";
-} else {
-  button.className = "primary-btn";
+        <div class="laptop-card-body">
+          <h3>${escapeHTML(laptop.name)}</h3>
+          <p><strong>Code:</strong> ${escapeHTML(laptop.code)}</p>
+          <p><strong>Inventory status:</strong> ${escapeHTML(status)}</p>
+
+          ${borrowing
+            ? `<p><strong>Your request:</strong> ${escapeHTML(borrowing.status)}</p>`
+            : ""}
+
+          <div class="status ${escapeHTML(status)}">
+            ${escapeHTML(status)}
+          </div>
+
+          ${button}
+        </div>
+      </article>
+    `;
+  }).join("");
 }
 
-button.textContent = buttonLabel;
-button.disabled = disabled;
 
-    if (action) {
-      button.addEventListener("click", () => action(button));
-    }
-
-    card.append(image, title, status, button);
-    grid.append(card);
-  });
-}
-
-
-
-async function requestLaptop(laptopId, button) {
-  if (button.disabled) return;
-
-  button.disabled = true;
-  button.textContent = "Submitting...";
-
+async function requestLaptop(laptopId) {
   try {
+    setMessage("laptopMessage", "");
+
     const result = await api("/api/borrow", {
       method: "POST",
-      body: {
-        userId: currentUser.id,
-        laptopId
-      }
+      body: { laptopId }
     });
 
-    setMessage(
-      "laptopMessage",
-      result.message || "Laptop request submitted successfully.",
-      "success"
-    );
-
-    // Refresh laptop inventory and this student's requests
+    setMessage("laptopMessage", result.message || "Request submitted.", "success");
     await loadStudentLaptops();
   } catch (error) {
     setMessage("laptopMessage", error.message, "error");
-
-    // Restore the button if the request failed
-    button.disabled = false;
-    button.textContent = "Request Laptop";
   }
 }
 
-
-async function cancelRequest(laptopId, button) {
-  if (!confirm("Are you sure you want to cancel this request?")) {
-    return;
-  }
-
-  button.disabled = true;
-
+async function cancelRequest(laptopId, messageTarget = "historyMessage") {
   try {
     const result = await api("/api/cancel-request", {
       method: "POST",
-      body: {
-        userId: currentUser.id,
-        laptopId
-      }
+      body: { laptopId }
     });
 
-    setMessage("laptopMessage", result.message, "success");
+    setMessage(messageTarget, result.message || "Request cancelled.", "success");
 
-    await loadStudentLaptops();
-    await loadHistory();
-  } catch (error) {
-    setMessage("laptopMessage", error.message, "error");
-    button.disabled = false;
-  }
-}
-
-
-async function loadHistory() {
-  try {
-    const result = await api(
-      `/api/borrowings/${encodeURIComponent(currentUser.id)}`
-    );
-
-    const history = result.history || [];
-    const tbody = $("historyTable");
-    tbody.replaceChildren();
-
-    if (!history.length) {
-      tbody.innerHTML = '<tr><td colspan="6">No borrowing history yet.</td></tr>';
-      return;
+    if (currentPage === "studentDashboard") {
+      await loadStudentLaptops();
+    } else {
+      await loadHistory();
+      await loadStudentLaptops();
     }
-
-    history.forEach(record => {
-      const tr = document.createElement("tr");
-
-      tr.innerHTML = `
-        <td>${escapeHTML(record.laptopCode)}</td>
-        <td>${escapeHTML(record.laptopName)}</td>
-        <td>${escapeHTML(formatDate(record.requestedAt || record.borrowedAt))}</td>
-        <td>${escapeHTML(formatDate(record.returnedAt))}</td>
-        <td>${badge(record.status)}</td>
-        <td></td>
-      `;
-
-      const action = tr.lastElementChild;
-
-      
-if (record.status === "pending") {
-  const button = document.createElement("button");
-  button.className = "reject-btn";
-  button.textContent = "Cancel Request";
-
-  button.addEventListener("click", async () => {
-    await cancelRequest(record.laptopId, button);
-  });
-
-  action.append(button);
-} else if (record.status === "borrowed") {
-  const button = document.createElement("button");
-  button.className = "return-btn";
-  button.textContent = "Return Laptop";
-
-  button.addEventListener("click", async () => {
-    await returnLaptop(record.laptopId, button);
-  });
-
-  action.append(button);
-} else {
-  action.textContent = "—";
-}
-
-
-      tbody.append(tr);
-    });
   } catch (error) {
-    setMessage("historyMessage", error.message, "error");
+    setMessage(messageTarget, error.message, "error");
   }
 }
 
-async function returnLaptop(laptopId, button) {
-  if (!confirm("Confirm that you are returning this laptop?")) return;
-
-  button.disabled = true;
-
+async function returnLaptop(laptopId, messageTarget = "historyMessage") {
   try {
     const result = await api("/api/return", {
       method: "POST",
-      body: { userId: currentUser.id, laptopId }
+      body: { laptopId }
     });
 
-    setMessage("historyMessage", result.message, "success");
-
-await loadStudentLaptops();
-await loadHistory();
-  } catch (error) {
-    setMessage("historyMessage", error.message, "error");
-    button.disabled = false;
-  }
-}
-
-function adminQuery(path) {
-  const separator = path.includes("?") ? "&" : "?";
-  return `${path}${separator}userId=${encodeURIComponent(currentUser.id)}`;
-}
-
-async function loadAdminDashboard() {
-  try {
-    const result = await api(adminQuery("/api/admin/laptops"));
-    const laptops = result.laptops || [];
-
-    $("statTotal").textContent = laptops.length;
-    $("statAvailable").textContent =
-      laptops.filter(laptop => laptop.status === "available").length;
-    $("statBorrowed").textContent =
-      laptops.filter(laptop => laptop.status === "borrowed").length;
-
-    const requests = await api(adminQuery("/api/admin/requests"));
-    $("statPending").textContent = (requests.requests || []).length;
-    await loadRecentActivity();
-  } catch (error) {
-    console.error("Dashboard:", error.message);
-  }
-}
-
-
-async function loadRecentActivity() {
-  const container = $("recentActivityList");
-
-  if (!container) return;
-
-  try {
-    const result = await api(adminQuery("/api/admin/activity"));
-    const activities = result.activities || [];
-
-    container.replaceChildren();
-
-    if (!activities.length) {
-      const empty = document.createElement("p");
-      empty.className = "activity-empty";
-      empty.textContent = "No recent borrowing activity yet.";
-      container.append(empty);
-      return;
-    }
-
-    const icons = {
-      request: "fa-laptop",
-      cancel: "fa-times-circle",
-      return: "fa-check-circle",
-      approval: "fa-clipboard-check"
-    };
-
-    activities.forEach(activity => {
-      const item = document.createElement("div");
-      item.className = "activity-item";
-
-      const icon = document.createElement("div");
-      icon.className = `activity-icon ${activity.type}`;
-
-      const iconElement = document.createElement("i");
-      iconElement.className = `fas ${icons[activity.type] || "fa-history"}`;
-      icon.append(iconElement);
-
-      const details = document.createElement("div");
-      details.className = "activity-details";
-
-      const description = document.createElement("p");
-      const student = document.createElement("strong");
-      student.textContent = activity.studentName;
-
-      description.append(
-        student,
-        document.createTextNode(
-          ` ${activity.message} ${activity.laptopCode} — ${activity.laptopName}.`
-        )
-      );
-
-      const meta = document.createElement("div");
-      meta.className = "activity-meta";
-
-      const date = new Date(activity.timestamp);
-      meta.textContent = Number.isNaN(date.getTime())
-        ? "Date unavailable"
-        : date.toLocaleString();
-
-      details.append(description, meta);
-      item.append(icon, details);
-      container.append(item);
-    });
-  } catch (error) {
-    console.error("Recent activity:", error.message);
-
-    container.replaceChildren();
-
-    const message = document.createElement("p");
-    message.className = "activity-empty";
-    message.textContent = "Unable to load recent activity.";
-    container.append(message);
-  }
-}
-
-
-async function loadRequests() {
-  try {
-    const result = await api(adminQuery("/api/admin/requests"));
-    const requests = result.requests || [];
-    const tbody = $("requestsTable");
-    tbody.replaceChildren();
-
-    if (!requests.length) {
-      tbody.innerHTML = '<tr><td colspan="6">No pending requests.</td></tr>';
-    }
-
-    requests.forEach(request => {
-      const tr = document.createElement("tr");
-
-      tr.innerHTML = `
-        <td>${escapeHTML(request.studentName)}</td>
-        <td>${escapeHTML(request.institutionalId)}</td>
-        <td>${escapeHTML(request.laptopCode)} — ${escapeHTML(request.laptopName)}</td>
-        <td>${escapeHTML(formatDate(request.requestedAt))}</td>
-        <td>${badge(request.status)}</td>
-        <td></td>
-      `;
-
-      const action = tr.lastElementChild;
-
-      const accept = document.createElement("button");
-      accept.className = "approve-btn";
-      accept.textContent = "Accept";
-      accept.addEventListener("click", () => {
-  decideRequest(request.id, "accept", accept, reject);});
-
-      const reject = document.createElement("button");
-      reject.className = "reject-btn";
-      reject.textContent = "Reject";
-      reject.addEventListener("click", () => {
-  decideRequest(request.id, "reject", accept, reject);});
-
-      action.append(accept, reject);
-      tbody.append(tr);
-    });
-
-  } catch (error) {
-    setMessage("requestsMessage", error.message, "error");
-  }
-}
-
-async function decideRequest(
-  requestId,
-  decision,
-  acceptButton,
-  rejectButton
-) {
-  if (!confirm(`Are you sure you want to ${decision} this request?`)) {
-    return;
-  }
-
-  if (acceptButton) acceptButton.disabled = true;
-  if (rejectButton) rejectButton.disabled = true;
-
-  try {
-    const result = await api(
-      `/api/admin/requests/${encodeURIComponent(requestId)}`,
-      {
-        method: "POST",
-        body: { userId: currentUser.id, decision }
-      }
-    );
-
-    setMessage("requestsMessage", result.message, "success");
-
-    await Promise.all([
-      loadRequests(),
-      loadInventory(),
-      loadLogs(),
-      loadAdminDashboard()
-    ]);
-  } catch (error) {
-    setMessage("requestsMessage", error.message, "error");
-  } finally {
-    if (acceptButton) acceptButton.disabled = false;
-    if (rejectButton) rejectButton.disabled = false;
-  }
-}
-
-async function loadInventory() {
-  try {
-    const result = await api(adminQuery("/api/admin/laptops"));
-    const laptops = result.laptops || [];
-    const tbody = $("inventoryTable");
-    tbody.replaceChildren();
-
-    if (!laptops.length) {
-      tbody.innerHTML = '<tr><td colspan="4">No laptops in inventory.</td></tr>';
-    }
-
-    laptops.forEach(laptop => {
-      const tr = document.createElement("tr");
-
-      tr.innerHTML = `
-        <td>${escapeHTML(laptop.laptop_code || laptop.code)}</td>
-        <td>${escapeHTML(laptop.laptop_name || laptop.name)}</td>
-        <td>${badge(laptop.status)}</td>
-        <td></td>
-      `;
-
-      const editButton = document.createElement("button");
-      editButton.className = "edit-btn";
-      editButton.type = "button";
-      editButton.innerHTML = '<i class="fas fa-pen"></i> Edit';
-      editButton.addEventListener("click", () => openEditLaptop(laptop));
-
-      const removeButton = document.createElement("button");
-      removeButton.className = "delete-btn";
-      removeButton.type = "button";
-      removeButton.textContent = "Remove";
-      removeButton.disabled = laptop.status === "borrowed";
-      removeButton.addEventListener("click", () => removeLaptop(laptop.id));
-
-      tr.lastElementChild.append(editButton, removeButton);
-      tbody.append(tr);
-    });
-  } catch (error) {
-    setMessage("inventoryMessage", error.message, "error");
-  }
-}
-
-function openEditLaptop(laptop) {
-  $("editLaptopId").value = laptop.id;
-  $("editLaptopName").value = laptop.laptop_name || laptop.name || "";
-  $("editLaptopCode").value = laptop.laptop_code || laptop.code || "";
-
-  setMessage("editLaptopMessage", "");
-  $("editLaptopPanel").classList.remove("hidden");
-  $("editLaptopPanel").scrollIntoView({ behavior: "smooth", block: "start" });
-  $("editLaptopName").focus();
-}
-
-function cancelEditLaptop() {
-  $("editLaptopForm").reset();
-  $("editLaptopPanel").classList.add("hidden");
-  setMessage("editLaptopMessage", "");
-}
-
-async function saveLaptopChanges(event) {
-  event.preventDefault();
-
-  const laptopId = $("editLaptopId").value;
-  const laptopName = $("editLaptopName").value.trim();
-  const laptopCode = $("editLaptopCode").value.trim();
-
-  if (!laptopName || !laptopCode) {
-    setMessage("editLaptopMessage", "Laptop name and code are required.", "error");
-    return;
-  }
-
-  const saveButton = $("saveLaptopChanges");
-  saveButton.disabled = true;
-  setMessage("editLaptopMessage", "Saving changes...");
-
-  try {
-    const result = await api(
-      `/api/admin/laptops/${encodeURIComponent(laptopId)}`,
-      {
-        method: "PATCH",
-        body: { userId: currentUser.id, laptopName, laptopCode }
-      }
-    );
-
-    setMessage(
-      "inventoryMessage",
-      result.message || "Laptop updated successfully.",
-      "success"
-    );
-
-    cancelEditLaptop();
-    await loadInventory();
+    setMessage(messageTarget, result.message || "Laptop returned.", "success");
     await loadStudentLaptops();
+
+    if (currentPage === "studentHistory") await loadHistory();
   } catch (error) {
-    setMessage("editLaptopMessage", error.message, "error");
-  } finally {
-    saveButton.disabled = false;
+    setMessage(messageTarget, error.message, "error");
   }
 }
 
-async function addLaptop(event) {
-  event.preventDefault();
+// -------------------- STUDENT HISTORY --------------------
 
-  try {
-    const result = await api("/api/admin/laptops", {
-      method: "POST",
-      body: {
-        userId: currentUser.id,
-        laptopName: $("newLaptopName").value.trim(),
-        laptopCode: $("newLaptopCode").value.trim()
-      }
-    });
+async function loadHistory() {
+  const tbody = document.getElementById("historyTable");
+  setMessage("historyMessage", "");
 
-    setMessage("inventoryMessage", result.message, "success");
-    $("addLaptopForm").reset();
-    await loadInventory();
-  } catch (error) {
-    setMessage("inventoryMessage", error.message, "error");
+  const result = await api(`/api/borrowings/${encodeURIComponent(userId())}`);
+  studentBorrowings = result.borrowings || [];
+
+  if (!studentBorrowings.length) {
+    tbody.innerHTML = emptyRow(6, "You have no borrowing history yet.");
+    return;
   }
-}
 
-async function removeLaptop(id) {
-  if (!confirm("Remove this laptop from the inventory?")) return;
+  tbody.innerHTML = studentBorrowings.map(item => {
+    const status = String(item.status || "").toLowerCase();
+    let action = "—";
 
-  try {
-    const result = await api(
-      `/api/admin/laptops/${encodeURIComponent(id)}`,
-      {
-        method: "DELETE",
-        body: { userId: currentUser.id }
-      }
-    );
-
-    setMessage("inventoryMessage", result.message, "success");
-    await loadInventory();
-  } catch (error) {
-    setMessage("inventoryMessage", error.message, "error");
-  }
-}
-
-async function loadUsers() {
-  try {
-    const result = await api(adminQuery("/api/admin/users"));
-    const users = result.users || [];
-    const tbody = $("usersTable");
-    tbody.replaceChildren();
-
-    if (!users.length) {
-      tbody.innerHTML = '<tr><td colspan="4">No users found.</td></tr>';
+    if (status === "pending") {
+      action = `<button class="reject-btn" data-action="cancel-request" data-laptop-id="${escapeHTML(item.laptopId)}">Cancel</button>`;
+    } else if (status === "borrowed") {
+      action = `<button class="return-btn" data-action="return-laptop" data-laptop-id="${escapeHTML(item.laptopId)}">Return</button>`;
     }
 
-    users.forEach(user => {
-      const tr = document.createElement("tr");
-
-      [
-        user.fullName,
-        user.institutionalId,
-        user.email,
-        user.accountType
-      ].forEach(value => {
-        const td = document.createElement("td");
-        td.textContent = value || "—";
-        tr.append(td);
-      });
-
-      tbody.append(tr);
-    });
-  } catch (error) {
-    setMessage("usersMessage", error.message, "error");
-  }
+    return `
+      <tr>
+        <td>${escapeHTML(item.laptopCode)}</td>
+        <td>${escapeHTML(item.laptopName)}</td>
+        <td>${escapeHTML(formatDate(item.requestedAt))}</td>
+        <td>${escapeHTML(formatDate(item.returnedAt))}</td>
+        <td>${statusBadge(status)}</td>
+        <td>${action}</td>
+      </tr>
+    `;
+  }).join("");
 }
 
-async function loadLogs() {
-  try {
-    const result = await api(adminQuery("/api/admin/logs"));
-    const logs = result.logs || [];
-    const tbody = $("logsTable");
-    tbody.replaceChildren();
+// -------------------- STUDENT PROFILE --------------------
 
-    if (!logs.length) {
-      tbody.innerHTML = '<tr><td colspan="6">No borrowing records.</td></tr>';
-    }
+function renderProfile() {
+  if (!currentUser) return;
 
-    logs.forEach(record => {
-      const tr = document.createElement("tr");
+  document.getElementById("profileName").textContent = currentUser.fullName || "";
+  document.getElementById("profileID").textContent = currentUser.institutionalId ?? "";
+  document.getElementById("profileEmail").textContent = currentUser.email || "";
+  document.getElementById("profileType").textContent = currentUser.accountType || "";
 
-      [
-        record.student?.name,
-        record.student?.institutionalId,
-        `${record.laptop?.code || ""} ${record.laptop?.name || ""}`.trim(),
-        formatDate(record.borrowedAt),
-        formatDate(record.returnedAt)
-      ].forEach(value => {
-        const td = document.createElement("td");
-        td.textContent = value || "—";
-        tr.append(td);
-      });
-
-      const status = document.createElement("td");
-      status.innerHTML = badge(record.status);
-      tr.append(status);
-      tbody.append(tr);
-    });
-  } catch (error) {
-    setMessage("logsMessage", error.message, "error");
-  }
+  document.getElementById("editProfileName").value = currentUser.fullName || "";
+  document.getElementById("editProfileID").value = currentUser.institutionalId ?? "";
+  document.getElementById("editProfileEmail").value = currentUser.email || "";
+  document.getElementById("editProfileType").value = currentUser.accountType || "";
 }
 
-
-function openProfileEditor() {
-  $("editProfileName").value = currentUser.fullName || "";
-  $("editProfileID").value = currentUser.institutionalId || "";
-  $("editProfileEmail").value = currentUser.email || "";
-  $("editProfileType").value = currentUser.accountType || "";
-
-  $("profileView").classList.add("hidden");
-  $("editProfileForm").classList.remove("hidden");
+function beginProfileEdit() {
+  renderProfile();
+  document.getElementById("profileView").classList.add("hidden");
+  document.getElementById("editProfileForm").classList.remove("hidden");
   setMessage("profileMessage", "");
 }
 
-function closeProfileEditor() {
-  $("editProfileForm").classList.add("hidden");
-  $("profileView").classList.remove("hidden");
+function cancelProfileEdit() {
+  document.getElementById("profileView").classList.remove("hidden");
+  document.getElementById("editProfileForm").classList.add("hidden");
+  renderProfile();
   setMessage("profileMessage", "");
 }
 
 async function saveProfile(event) {
   event.preventDefault();
+  setMessage("profileMessage", "");
 
-  const fullName = $("editProfileName").value.trim();
-  const institutionalId = $("editProfileID").value.trim();
-
-  if (!fullName || !institutionalId) {
-    setMessage(
-      "profileMessage",
-      "Full name and institutional ID are required.",
-      "error"
-    );
-    return;
-  }
-
-  const saveButton = $("editProfileForm").querySelector(
-    'button[type="submit"]'
-  );
-
-  saveButton.disabled = true;
-  setMessage("profileMessage", "Saving changes...");
+  const fullName = document.getElementById("editProfileName").value.trim();
+  const institutionalId = document.getElementById("editProfileID").value.trim();
 
   try {
-    const result = await api(
-      `/api/profile/${encodeURIComponent(currentUser.id)}`,
-      {
-        method: "PATCH",
-        body: { fullName, institutionalId }
-      }
-    );
+    const result = await api(`/api/profile/${encodeURIComponent(userId())}`, {
+      method: "PATCH",
+      body: { fullName, institutionalId }
+    });
 
-    // Update the current session with the saved profile details.
-    currentUser.fullName = result.profile.fullName;
-    currentUser.institutionalId = result.profile.institutionalId;
+    if (result.user) {
+      currentUser = result.user;
+      sessionStorage.setItem(USER_STORAGE_KEY, JSON.stringify(currentUser));
+    }
 
-    sessionStorage.setItem(
-      "cpeBorrowingUser",
-      JSON.stringify(currentUser)
-    );
+    document.getElementById("headerUser").textContent = currentUser.fullName;
+    document.getElementById("welcomeName").textContent = currentUser.fullName;
 
-    // Refresh displayed profile information.
-    $("profileName").textContent = currentUser.fullName;
-    $("profileID").textContent = currentUser.institutionalId;
-    $("profileEmail").textContent = currentUser.email || "";
-    $("profileType").textContent = currentUser.accountType || "";
-
-    $("headerUser").textContent =
-      currentUser.fullName || currentUser.email;
-
-    $("welcomeName").textContent = currentUser.fullName;
-
-    closeProfileEditor();
-    setMessage("profileMessage", result.message, "success");
+    renderProfile();
+    document.getElementById("profileView").classList.remove("hidden");
+    document.getElementById("editProfileForm").classList.add("hidden");
+    setMessage("profileMessage", result.message || "Profile updated successfully.", "success");
   } catch (error) {
     setMessage("profileMessage", error.message, "error");
-  } finally {
-    saveButton.disabled = false;
   }
 }
 
+// -------------------- ADMIN DASHBOARD --------------------
 
-document.addEventListener("DOMContentLoaded", () => {
-  $("loginForm").addEventListener("submit", login);
-  $("registerForm").addEventListener("submit", register);
-  $("editProfileBtn").addEventListener("click", openProfileEditor);
+async function loadAdminDashboard() {
+  const [inventoryResult, requestsResult, logsResult] = await Promise.all([
+    api("/api/admin/laptops"),
+    api("/api/admin/requests"),
+    api("/api/admin/logs")
+  ]);
 
-$("cancelProfileEdit").addEventListener("click", closeProfileEditor);
+  const laptops = inventoryResult.laptops || [];
+  const requests = requestsResult.requests || [];
+  const logs = logsResult.logs || [];
 
-$("editProfileForm").addEventListener("submit", saveProfile);
-  $("showRegister").addEventListener("click", event => {
-    event.preventDefault();
-    authPage("register");
-  });
+  document.getElementById("statTotal").textContent = laptops.length;
+  document.getElementById("statAvailable").textContent =
+    laptops.filter(item => String(item.status).toLowerCase() === "available").length;
+  document.getElementById("statBorrowed").textContent =
+    laptops.filter(item => String(item.status).toLowerCase() === "borrowed").length;
+  document.getElementById("statPending").textContent = requests.length;
 
-  $("showLogin").addEventListener("click", event => {
-    event.preventDefault();
-    authPage("login");
-  });
+  renderRecentActivity(logs);
+}
 
-  $("studentLogout").addEventListener("click", logout);
-  $("adminLogout").addEventListener("click", logout);
+function renderRecentActivity(logs) {
+  const container = document.getElementById("recentActivityList");
 
-  $("addLaptopForm").addEventListener("submit", addLaptop);
-  $("editLaptopForm").addEventListener("submit", saveLaptopChanges);
-  $("cancelEditLaptop").addEventListener("click", cancelEditLaptop);
-
-  $("laptopSearch").addEventListener("input", renderLaptops);
-  $("refreshRequests").addEventListener("click", loadRequests);
-
-  document.querySelectorAll(".sidebar-menu button[data-page]").forEach(button => {
-    button.addEventListener("click", () => showPage(button.dataset.page));
-  });
-
-  document.querySelectorAll("[data-goto]").forEach(button => {
-    button.addEventListener("click", () => showPage(button.dataset.goto));
-  });
-
-  const saved = sessionStorage.getItem("cpeBorrowingUser");
-
-  if (saved) {
-    try {
-      currentUser = JSON.parse(saved);
-
-      if (
-        currentUser?.id &&
-        ["student", "admin"].includes(currentUser.accountType)
-      ) {
-        enterApp();
-      } else {
-        logout();
-      }
-    } catch {
-      logout();
-    }
-  } else {
-    authPage("login");
+  if (!logs.length) {
+    container.innerHTML = `<p class="activity-empty">No borrowing activity yet.</p>`;
+    return;
   }
-  
+
+  container.innerHTML = logs.slice(0, 8).map(item => {
+    const status = String(item.status || "").toLowerCase();
+    const iconClass = status === "returned"
+      ? "return"
+      : status === "borrowed"
+        ? "approval"
+        : status === "cancelled" || status === "rejected"
+          ? "cancel"
+          : "request";
+
+    const icon = status === "returned"
+      ? "fa-rotate-left"
+      : status === "borrowed"
+        ? "fa-check"
+        : status === "cancelled" || status === "rejected"
+          ? "fa-ban"
+          : "fa-clipboard-list";
+
+    return `
+      <div class="activity-item">
+        <div class="activity-icon ${iconClass}">
+          <i class="fas ${icon}" aria-hidden="true"></i>
+        </div>
+        <div class="activity-details">
+          <p><strong>${escapeHTML(item.studentName)}</strong> — ${escapeHTML(item.laptopName)} (${escapeHTML(item.laptopCode)})</p>
+          <p>Status: ${escapeHTML(status)}</p>
+          <span class="activity-meta">${escapeHTML(formatDate(item.returnedAt || item.requestedAt))}</span>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+// -------------------- ADMIN REQUESTS --------------------
+
+async function loadRequests() {
+  setMessage("requestsMessage", "");
+
+  const result = await api("/api/admin/requests");
+  const requests = result.requests || [];
+  const tbody = document.getElementById("requestsTable");
+
+  if (!requests.length) {
+    tbody.innerHTML = emptyRow(6, "There are no pending requests.");
+    return;
+  }
+
+  tbody.innerHTML = requests.map(request => `
+    <tr>
+      <td>${escapeHTML(request.studentName)}</td>
+      <td>${escapeHTML(request.institutionalId)}</td>
+      <td>${escapeHTML(request.laptopName)} (${escapeHTML(request.laptopCode)})</td>
+      <td>${escapeHTML(formatDate(request.requestedAt))}</td>
+      <td>${statusBadge(request.status)}</td>
+      <td>
+        <button class="approve-btn" data-action="decide-request" data-request-id="${escapeHTML(request.id)}" data-decision="accept">Accept</button>
+        <button class="reject-btn" data-action="decide-request" data-request-id="${escapeHTML(request.id)}" data-decision="reject">Reject</button>
+      </td>
+    </tr>
+  `).join("");
+}
+
+async function decideRequest(requestId, decision) {
+  try {
+    setMessage("requestsMessage", "");
+
+    const result = await api(`/api/admin/requests/${encodeURIComponent(requestId)}`, {
+      method: "POST",
+      body: { decision }
+    });
+
+    setMessage("requestsMessage", result.message || "Request updated.", "success");
+
+    await Promise.all([
+      loadRequests(),
+      loadInventory(),
+      loadAdminDashboard()
+    ]);
+  } catch (error) {
+    setMessage("requestsMessage", error.message, "error");
+  }
+}
+
+// -------------------- ADMIN INVENTORY --------------------
+
+async function loadInventory() {
+  setMessage("inventoryMessage", "");
+
+  const result = await api("/api/admin/laptops");
+  const laptops = result.laptops || [];
+  const tbody = document.getElementById("inventoryTable");
+
+  if (!laptops.length) {
+    tbody.innerHTML = emptyRow(4, "No laptops have been added.");
+    return;
+  }
+
+  tbody.innerHTML = laptops.map(laptop => `
+    <tr>
+      <td>${escapeHTML(laptop.code)}</td>
+      <td>${escapeHTML(laptop.name)}</td>
+      <td>${statusBadge(laptop.status)}</td>
+      <td>
+        <button class="edit-btn" data-action="edit-laptop" data-laptop-id="${escapeHTML(laptop.id)}">Edit</button>
+        <button class="delete-btn" data-action="delete-laptop" data-laptop-id="${escapeHTML(laptop.id)}">Remove</button>
+      </td>
+    </tr>
+  `).join("");
+}
+
+async function addLaptop(event) {
+  event.preventDefault();
+  setMessage("inventoryMessage", "");
+
+  const laptopName = document.getElementById("newLaptopName").value.trim();
+  const laptopCode = document.getElementById("newLaptopCode").value.trim();
+
+  try {
+    const result = await api("/api/admin/laptops", {
+      method: "POST",
+      body: { laptopName, laptopCode }
+    });
+
+    document.getElementById("addLaptopForm").reset();
+    setMessage("inventoryMessage", result.message || "Laptop added.", "success");
+
+    await loadInventory();
+    await loadAdminDashboard();
+  } catch (error) {
+    setMessage("inventoryMessage", error.message, "error");
+  }
+}
+
+function beginLaptopEdit(laptopId) {
+  const laptop = laptopList.find(item => item.id === laptopId);
+
+  // Inventory data is fetched separately from the student laptop list.
+  if (!laptop) {
+    loadInventoryForEdit(laptopId);
+    return;
+  }
+
+  fillLaptopEdit(laptop);
+}
+
+async function loadInventoryForEdit(laptopId) {
+  try {
+    const result = await api("/api/admin/laptops");
+    const laptop = (result.laptops || []).find(item => item.id === laptopId);
+
+    if (!laptop) {
+      setMessage("inventoryMessage", "Laptop not found.", "error");
+      return;
+    }
+
+    fillLaptopEdit(laptop);
+  } catch (error) {
+    setMessage("inventoryMessage", error.message, "error");
+  }
+}
+
+function fillLaptopEdit(laptop) {
+  document.getElementById("editLaptopId").value = laptop.id;
+  document.getElementById("editLaptopName").value = laptop.name;
+  document.getElementById("editLaptopCode").value = laptop.code;
+  document.getElementById("editLaptopPanel").classList.remove("hidden");
+  setMessage("editLaptopMessage", "");
+
+  document.getElementById("editLaptopPanel").scrollIntoView({
+    behavior: "smooth",
+    block: "start"
+  });
+}
+
+function cancelLaptopEdit() {
+  document.getElementById("editLaptopPanel").classList.add("hidden");
+  document.getElementById("editLaptopForm").reset();
+  setMessage("editLaptopMessage", "");
+}
+
+async function saveLaptopEdit(event) {
+  event.preventDefault();
+  setMessage("editLaptopMessage", "");
+
+  const id = document.getElementById("editLaptopId").value;
+  const laptopName = document.getElementById("editLaptopName").value.trim();
+  const laptopCode = document.getElementById("editLaptopCode").value.trim();
+
+  try {
+    const result = await api(`/api/admin/laptops/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: { laptopName, laptopCode }
+    });
+
+    setMessage("editLaptopMessage", result.message || "Laptop updated.", "success");
+    await loadInventory();
+    await loadAdminDashboard();
+    cancelLaptopEdit();
+    setMessage("inventoryMessage", "Laptop information updated.", "success");
+  } catch (error) {
+    setMessage("editLaptopMessage", error.message, "error");
+  }
+}
+
+async function removeLaptop(laptopId) {
+  if (!confirm("Are you sure you want to remove this laptop from the inventory?")) {
+    return;
+  }
+
+  try {
+    const result = await api(`/api/admin/laptops/${encodeURIComponent(laptopId)}`, {
+      method: "DELETE"
+    });
+
+    setMessage("inventoryMessage", result.message || "Laptop removed.", "success");
+    await loadInventory();
+    await loadAdminDashboard();
+  } catch (error) {
+    setMessage("inventoryMessage", error.message, "error");
+  }
+}
+
+// -------------------- ADMIN USERS AND LOGS --------------------
+
+async function loadUsers() {
+  setMessage("usersMessage", "");
+
+  const result = await api("/api/admin/users");
+  const users = result.users || [];
+  const tbody = document.getElementById("usersTable");
+
+  if (!users.length) {
+    tbody.innerHTML = emptyRow(4, "No registered users found.");
+    return;
+  }
+
+  tbody.innerHTML = users.map(user => `
+    <tr>
+      <td>${escapeHTML(user.fullName)}</td>
+      <td>${escapeHTML(user.institutionalId)}</td>
+      <td>${escapeHTML(user.email)}</td>
+      <td>${statusBadge(user.accountType)}</td>
+    </tr>
+  `).join("");
+}
+
+async function loadLogs() {
+  setMessage("logsMessage", "");
+
+  const result = await api("/api/admin/logs");
+  const logs = result.logs || [];
+  const tbody = document.getElementById("logsTable");
+
+  if (!logs.length) {
+    tbody.innerHTML = emptyRow(6, "No borrowing logs found.");
+    return;
+  }
+
+  tbody.innerHTML = logs.map(item => `
+    <tr>
+      <td>${escapeHTML(item.studentName)}</td>
+      <td>${escapeHTML(item.institutionalId)}</td>
+      <td>${escapeHTML(item.laptopName)} (${escapeHTML(item.laptopCode)})</td>
+      <td>${escapeHTML(formatDate(item.requestedAt))}</td>
+      <td>${escapeHTML(formatDate(item.returnedAt))}</td>
+      <td>${statusBadge(item.status)}</td>
+    </tr>
+  `).join("");
+}
+
+// -------------------- CLICK HANDLERS --------------------
+
+document.addEventListener("click", async event => {
+  const pageButton = event.target.closest("[data-page]");
+  if (pageButton) {
+    event.preventDefault();
+    await showPage(pageButton.dataset.page);
+    return;
+  }
+
+  const gotoButton = event.target.closest("[data-goto]");
+  if (gotoButton) {
+    event.preventDefault();
+    await showPage(gotoButton.dataset.goto);
+    return;
+  }
+
+  const actionButton = event.target.closest("[data-action]");
+  if (!actionButton) return;
+
+  const action = actionButton.dataset.action;
+  const laptopId = actionButton.dataset.laptopId;
+  const requestId = actionButton.dataset.requestId;
+
+  actionButton.disabled = true;
+
+  try {
+    if (action === "request-laptop") await requestLaptop(laptopId);
+    if (action === "cancel-request") {
+      const target = currentPage === "studentDashboard" ? "laptopMessage" : "historyMessage";
+      await cancelRequest(laptopId, target);
+    }
+    if (action === "return-laptop") {
+      const target = currentPage === "studentDashboard" ? "laptopMessage" : "historyMessage";
+      await returnLaptop(laptopId, target);
+    }
+    if (action === "decide-request") {
+      await decideRequest(requestId, actionButton.dataset.decision);
+    }
+    if (action === "edit-laptop") beginLaptopEdit(laptopId);
+    if (action === "delete-laptop") await removeLaptop(laptopId);
+  } finally {
+    actionButton.disabled = false;
+  }
+});
+
+// -------------------- FORM AND NAVIGATION EVENTS --------------------
+
+document.getElementById("loginForm").addEventListener("submit", login);
+document.getElementById("registerForm").addEventListener("submit", register);
+document.getElementById("showRegister").addEventListener("click", event => {
+  event.preventDefault();
+  authPage("register");
+});
+document.getElementById("showLogin").addEventListener("click", event => {
+  event.preventDefault();
+  authPage("login");
+});
+
+document.getElementById("studentLogout").addEventListener("click", logout);
+document.getElementById("adminLogout").addEventListener("click", logout);
+
+document.getElementById("laptopSearch").addEventListener("input", renderLaptops);
+document.getElementById("refreshRequests").addEventListener("click", loadRequests);
+document.getElementById("addLaptopForm").addEventListener("submit", addLaptop);
+document.getElementById("editLaptopForm").addEventListener("submit", saveLaptopEdit);
+document.getElementById("cancelEditLaptop").addEventListener("click", cancelLaptopEdit);
+
+document.getElementById("editProfileBtn").addEventListener("click", beginProfileEdit);
+document.getElementById("cancelProfileEdit").addEventListener("click", cancelProfileEdit);
+document.getElementById("editProfileForm").addEventListener("submit", saveProfile);
+
+// -------------------- RESTORE SESSION --------------------
+
+document.addEventListener("DOMContentLoaded", async () => {
+  currentUser = readStoredJSON(USER_STORAGE_KEY);
+  currentSession = readStoredJSON(SESSION_STORAGE_KEY);
+
+  if (!currentUser || !currentSession?.access_token) {
+    clearSession();
+    authPage("login");
+    return;
+  }
+
+  await enterApp();
 });
